@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bacteria_BaseCodeB_Sentence</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        background: #000;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+      }
+
+      canvas {
+        display: block;
+        width: min(100vw, 72vh);
+        height: 100vh;
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="bacteria" aria-label="Liquid bacteria text spelling TEST SPECIES EXPERIMENT"></canvas>
+
+    <script>
+      const canvas = document.querySelector("#bacteria");
+      const ctx = canvas.getContext("2d", { alpha: false });
+      const maskCanvas = document.createElement("canvas");
+      const maskCtx = maskCanvas.getContext("2d", { willReadFrequently: true });
+
+      const simW = 360;
+      const simH = 560;
+      const size = simW * simH;
+      const dA = 1.0;
+      const dB = 0.45;
+      const feed = 0.055;
+      const kill = 0.064;
+      const loopFrames = 460;
+      const words = [
+        { text: "TEST", x: 0.18, y: 0.40, delay: 0.03 },
+        { text: "SPECIES", x: 0.18, y: 0.515, delay: 0.16 },
+        { text: "EXPERIMENT", x: 0.18, y: 0.63, delay: 0.31 },
+      ];
+      const wordScale = simW * 0.095 * 0.14;
+      const glyphSegments = {
+        T: [[[0, 0], [4, 0]], [[2, 0], [2, 7]]],
+        E: [[[0, 0], [0, 7]], [[0, 0], [4, 0]], [[0, 3.5], [3.5, 3.5]], [[0, 7], [4, 7]]],
+        S: [[[4, 0], [0.6, 0]], [[0.6, 0], [0, 1.2]], [[0, 1.2], [0.4, 3.2]], [[0.4, 3.2], [3.6, 3.7]], [[3.6, 3.7], [4, 5.8]], [[4, 5.8], [3.3, 7]], [[3.3, 7], [0, 7]]],
+        P: [[[0, 0], [0, 7]], [[0, 0], [3.2, 0]], [[3.2, 0], [4, 1.6]], [[4, 1.6], [3.2, 3.3]], [[3.2, 3.3], [0, 3.3]]],
+        C: [[[4, 0.4], [1, 0]], [[1, 0], [0, 1.2]], [[0, 1.2], [0, 5.8]], [[0, 5.8], [1, 7]], [[1, 7], [4, 6.6]]],
+        I: [[[0.7, 0], [3.3, 0]], [[2, 0], [2, 7]], [[0.7, 7], [3.3, 7]]],
+        X: [[[0, 0], [4, 7]], [[4, 0], [0, 7]]],
+        R: [[[0, 0], [0, 7]], [[0, 0], [3.1, 0]], [[3.1, 0], [4, 1.55]], [[4, 1.55], [3.1, 3.25]], [[3.1, 3.25], [0, 3.25]], [[1.5, 3.25], [4, 7]]],
+        M: [[[0, 7], [0, 0]], [[0, 0], [2, 3.1]], [[2, 3.1], [4, 0]], [[4, 0], [4, 7]]],
+        N: [[[0, 7], [0, 0]], [[0, 0], [4, 7]], [[4, 7], [4, 0]]],
+      };
+
+      let a = new Float32Array(size);
+      let b = new Float32Array(size);
+      let nextA = new Float32Array(size);
+      let nextB = new Float32Array(size);
+      let textMask = new Float32Array(size);
+      let edgeMask = new Float32Array(size);
+      let textPoints = [];
+      let wordPointGroups = [];
+      let viewW = 0;
+      let viewH = 0;
+      let frame = 0;
+      let clockFrame = 0;
+      let lastFrame = 0;
+
+      function idx(x, y) {
+        return x + y * simW;
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function smoothstep(edge0, edge1, value) {
+        const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+        return t * t * (3 - 2 * t);
+      }
+
+      function wrap01(value) {
+        return ((value % 1) + 1) % 1;
+      }
+
+      function resize() {
+        const cssW = Math.min(window.innerWidth, window.innerHeight * 0.72);
+        const cssH = window.innerHeight;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+        viewW = Math.round(cssW * dpr);
+        viewH = Math.round(cssH * dpr);
+        canvas.width = viewW;
+        canvas.height = viewH;
+        canvas.style.width = `${cssW}px`;
+        canvas.style.height = `${cssH}px`;
+      }
+
+      function setup() {
+        resize();
+        buildTextMask();
+        initGrid();
+        window.addEventListener("resize", resize);
+        requestAnimationFrame(draw);
+      }
+
+      function initGrid() {
+        for (let i = 0; i < size; i += 1) {
+          a[i] = 1;
+          b[i] = 0;
+          nextA[i] = 1;
+          nextB[i] = 0;
+        }
+
+        for (const point of textPoints) {
+          if (Math.random() > 0.82) {
+            addSoftCircle(point.x, point.y, 1.6 + Math.random() * 1.2, 0.42);
+          }
+        }
+      }
+
+      function buildTextMask() {
+        maskCanvas.width = simW;
+        maskCanvas.height = simH;
+        maskCtx.clearRect(0, 0, simW, simH);
+        maskCtx.strokeStyle = "#fff";
+        maskCtx.lineJoin = "round";
+        maskCtx.lineCap = "round";
+
+        for (const word of words) {
+          drawWordMask(word);
+        }
+
+        const data = maskCtx.getImageData(0, 0, simW, simH).data;
+        textPoints = [];
+        wordPointGroups = words.map(() => []);
+
+        for (let y = 1; y < simH - 1; y += 1) {
+          for (let x = 1; x < simW - 1; x += 1) {
+            const i = idx(x, y);
+            const alpha = data[i * 4 + 3] / 255;
+            textMask[i] = alpha;
+
+            const left = data[idx(x - 1, y) * 4 + 3] / 255;
+            const right = data[idx(x + 1, y) * 4 + 3] / 255;
+            const up = data[idx(x, y - 1) * 4 + 3] / 255;
+            const down = data[idx(x, y + 1) * 4 + 3] / 255;
+            const edge = alpha > 0.08 && Math.min(left, right, up, down) < 0.08;
+            edgeMask[i] = edge ? 1 : 0;
+
+            if (edge || (alpha > 0.18 && Math.random() > 0.95)) {
+              const wordIndex = nearestWordIndex(y);
+              const delay = pointDelay(wordIndex, x, y);
+              const distort = Math.sin(x * 0.091 + y * 0.047) * 1.8;
+              const point = { x, y, edge, delay, wordIndex, distort };
+              textPoints.push(point);
+              wordPointGroups[wordIndex].push(point);
+            }
+          }
+        }
+      }
+
+      function drawWordMask(word) {
+        const scale = wordScale;
+        const glyphAdvance = scale * 5.45;
+        const top = simH * word.y - scale * 3.5;
+        let left = simW * word.x;
+
+        maskCtx.lineWidth = Math.max(3.2, scale * 0.9);
+
+        for (let i = 0; i < word.text.length; i += 1) {
+          const letter = word.text[i];
+          const swell = 1 + Math.sin(i * 1.7 + word.y * 13) * 0.085;
+          const drop = Math.sin(i * 2.1 + word.y * 9) * scale * 0.18;
+          drawGlyphMask(letter, left, top + drop, scale * swell, i + word.y * 20);
+          left += glyphAdvance;
+        }
+      }
+
+      function drawGlyphMask(letter, left, top, scale, salt) {
+        const segments = glyphSegments[letter];
+        if (!segments) return;
+
+        maskCtx.beginPath();
+
+        for (const segment of segments) {
+          const sx = left + segment[0][0] * scale;
+          const sy = top + segment[0][1] * scale;
+          const ex = left + segment[1][0] * scale;
+          const ey = top + segment[1][1] * scale;
+          const mx = (sx + ex) * 0.5 + Math.sin(salt + segment[0][0] * 1.3) * scale * 0.34;
+          const my = (sy + ey) * 0.5 + Math.cos(salt + segment[1][1] * 1.7) * scale * 0.28;
+
+          maskCtx.moveTo(sx, sy);
+          maskCtx.quadraticCurveTo(mx, my, ex, ey);
+        }
+
+        maskCtx.stroke();
+      }
+
+      function nearestWordIndex(y) {
+        let bestIndex = 0;
+        let bestDistance = Infinity;
+
+        for (let i = 0; i < words.length; i += 1) {
+          const distance = Math.abs(y / simH - words[i].y);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestIndex = i;
+          }
+        }
+
+        return bestIndex;
+      }
+
+      function pointDelay(wordIndex, x, y) {
+        const word = words[wordIndex];
+        const letterWave = Math.floor((x - simW * word.x) / Math.max(1, wordScale * 5.45));
+        const latePocket = Math.sin(letterWave * 2.4 + wordIndex * 1.9) > 0.54 ? 0.22 : 0;
+        const earlyPocket = Math.cos(letterWave * 1.7 + y * 0.011) > 0.72 ? -0.08 : 0;
+
+        return clamp(word.delay + letterWave * 0.025 + latePocket + earlyPocket, 0, 0.74);
+      }
+
+      function draw(now) {
+        if (now - lastFrame < 1000 / 36) {
+          requestAnimationFrame(draw);
+          return;
+        }
+
+        lastFrame = now;
+        clockFrame += 1;
+        const basePhase = (clockFrame % loopFrames) / loopFrames;
+        const fastForward = fastForwardWindow(basePhase);
+        const speed = 0.42 + fastForward * 8.2;
+        frame += speed;
+
+        const phase = (frame % loopFrames) / loopFrames;
+        const transfer = dropletTransferPulse(phase);
+        const burst = suddenMiddleBurst(phase);
+        const steps = 2 + Math.floor(burst * 2 + fastForward * 2);
+
+        for (let i = 0; i < steps; i += 1) {
+          updateReaction();
+        }
+
+        thinLiquid(0.00072 + burst * 0.0017 + fastForward * 0.0021);
+        exchangeLiquid(phase, transfer, burst);
+        pullLiquidIntoWords(0.12 + transfer * 0.5 + burst * 0.16, fastForward);
+
+        window.bacteriaDebug = { frame, clockFrame, fastForward, phase };
+        renderLiquid();
+        requestAnimationFrame(draw);
+      }
+
+      function updateReaction() {
+        for (let y = 1; y < simH - 1; y += 1) {
+          for (let x = 1; x < simW - 1; x += 1) {
+            const i = idx(x, y);
+            const av = a[i];
+            const bv = b[i];
+            const reaction = av * bv * bv;
+            const na = av + dA * laplace(a, x, y) - reaction + feed * (1 - av);
+            const nb = bv + dB * laplace(b, x, y) + reaction - (kill + feed) * bv;
+
+            nextA[i] = clamp(na, 0, 1);
+            nextB[i] = clamp(nb, 0, 1);
+          }
+        }
+
+        const oldA = a;
+        const oldB = b;
+        a = nextA;
+        b = nextB;
+        nextA = oldA;
+        nextB = oldB;
+      }
+
+      function laplace(field, x, y) {
+        let sum = field[idx(x, y)] * -1;
+        sum += field[idx(x - 1, y)] * 0.2;
+        sum += field[idx(x + 1, y)] * 0.2;
+        sum += field[idx(x, y - 1)] * 0.2;
+        sum += field[idx(x, y + 1)] * 0.2;
+        sum += field[idx(x - 1, y - 1)] * 0.05;
+        sum += field[idx(x + 1, y - 1)] * 0.05;
+        sum += field[idx(x - 1, y + 1)] * 0.05;
+        sum += field[idx(x + 1, y + 1)] * 0.05;
+        return sum;
+      }
+
+      function pullLiquidIntoWords(amount, fastForward = 0) {
+        if (amount < 0.04) return;
+
+        const stride = amount > 0.35 ? 1 : 2;
+        const strength = 0.038 * amount;
+        const jitter = Math.sin(frame * 0.026) * 1.1;
+        const phase = (frame % loopFrames) / loopFrames;
+        const start = Math.floor(frame) % stride;
+
+        for (let i = start; i < textPoints.length; i += stride) {
+          const point = textPoints[i];
+          if (!point) continue;
+          const localPhase = wrap01(phase - point.delay);
+          const arrival = smoothstep(0.05, 0.18, localPhase) - smoothstep(0.3, 0.46, localPhase);
+          const lateKick = smoothstep(0.52, 0.56, localPhase) - smoothstep(0.585, 0.64, localPhase);
+          if (arrival <= 0.015 && lateKick <= 0.015) continue;
+
+          const pulse = clamp(arrival + lateKick * 0.65, 0, 1);
+          const wobble = Math.sin(i * 0.37 + frame * 0.038 + point.distort) * (point.edge ? 1.9 : 0.95);
+          const bubble = 1 + Math.sin(frame * 0.03 + i * 0.19) * 0.14 + lateKick * 0.46;
+          addSoftCircle(
+            point.x + wobble,
+            point.y + jitter * 0.18 + Math.cos(i * 0.21 + frame * 0.032) * 0.55,
+            (point.edge ? 2.05 : 1.15) * bubble,
+            strength * pulse * (point.edge ? 1.05 : 0.12)
+          );
+        }
+      }
+
+      function exchangeLiquid(phase, transfer, burst) {
+        const pairs = [
+          [simW * 0.15, simH * 0.78, simW * 0.28, simH * 0.25, 0.0],
+          [simW * 0.85, simH * 0.78, simW * 0.28, simH * 0.25, 0.006],
+          [simW * 0.15, simH * 0.48, simW * 0.82, simH * 0.48, -0.005],
+          [simW * 0.2, simH * 0.31, simW * 0.82, simH * 0.71, 0.011],
+          [simW * 0.84, simH * 0.31, simW * 0.2, simH * 0.71, -0.012],
+          [simW * 0.28, simH * 0.88, simW * 0.74, simH * 0.27, 0.018],
+        ];
+
+        for (let i = 0; i < pairs.length; i += 1) {
+          const p = pairs[i];
+          const travel = dropletEase(wrap01(phase + p[4]));
+          const x = p[0] + (p[2] - p[0]) * travel;
+          const y = p[1] + (p[3] - p[1]) * travel;
+          const angle = Math.atan2(p[3] - p[1], p[2] - p[0]);
+          const wobble = Math.sin(frame * 0.034 + i * 2.1) * (1.2 + burst * 5.8);
+          const px = x + Math.cos(angle + Math.PI / 2) * wobble;
+          const py = y + Math.sin(angle + Math.PI / 2) * wobble;
+          const radius = 1.25 + transfer * 0.72 + burst * 0.9;
+
+          guideBrokenTrail(p[0], p[1], p[2], p[3], 0.00045 + burst * 0.002, i);
+          addSoftCircle(px, py, radius, 0.008 + burst * 0.026);
+
+          if (burst > 0.22) {
+            addSoftCircle(px - Math.cos(angle) * burst * 7, py - Math.sin(angle) * burst * 7, 0.9, burst * 0.02);
+          }
+        }
+      }
+
+      function guideBrokenTrail(x1, y1, x2, y2, strength, salt) {
+        const steps = 17;
+        const angle = Math.atan2(y2 - y1, x2 - x1);
+
+        for (let i = 0; i < steps; i += 1) {
+          if ((i + salt) % 4 === 1) continue;
+
+          const p = i / (steps - 1);
+          const wave = Math.sin(p * Math.PI * 2.1 + frame * 0.014 + salt) * 1.8;
+          const x = x1 + (x2 - x1) * p + Math.cos(angle + Math.PI / 2) * wave;
+          const y = y1 + (y2 - y1) * p + Math.sin(angle + Math.PI / 2) * wave;
+          addSoftCircle(x, y, 0.9, strength);
+        }
+      }
+
+      function thinLiquid(amount) {
+        for (let y = 1; y < simH - 1; y += 1) {
+          for (let x = 1; x < simW - 1; x += 1) {
+            const i = idx(x, y);
+            const onText = textMask[i];
+            const local = amount * (onText > 0.1 ? 0.3 : 1.0);
+            b[i] = clamp(b[i] - local, 0, 1);
+            a[i] = clamp(a[i] + local * 0.62, 0, 1);
+          }
+        }
+      }
+
+      function addSoftCircle(cx, cy, radius, amount) {
+        const r = Math.ceil(radius) + 1;
+
+        for (let dy = -r; dy <= r; dy += 1) {
+          for (let dx = -r; dx <= r; dx += 1) {
+            const x = Math.floor(cx + dx);
+            const y = Math.floor(cy + dy);
+            if (x < 1 || x >= simW - 1 || y < 1 || y >= simH - 1) continue;
+
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d > radius) continue;
+
+            const falloff = 1 - d / radius;
+            const i = idx(x, y);
+            b[i] = clamp(b[i] + amount * falloff, 0, 1);
+            a[i] = clamp(a[i] - amount * 0.34 * falloff, 0, 1);
+          }
+        }
+      }
+
+      function addSoftEllipse(cx, cy, rx, ry, angle, amount) {
+        const bound = Math.ceil(Math.max(rx, ry)) + 1;
+        const ca = Math.cos(angle);
+        const sa = Math.sin(angle);
+
+        for (let dy = -bound; dy <= bound; dy += 1) {
+          for (let dx = -bound; dx <= bound; dx += 1) {
+            const x = Math.floor(cx + dx);
+            const y = Math.floor(cy + dy);
+            if (x < 1 || x >= simW - 1 || y < 1 || y >= simH - 1) continue;
+
+            const lx = dx * ca + dy * sa;
+            const ly = -dx * sa + dy * ca;
+            const d = Math.sqrt((lx * lx) / (rx * rx) + (ly * ly) / (ry * ry));
+            if (d > 1) continue;
+
+            const falloff = 1 - d;
+            const i = idx(x, y);
+            b[i] = clamp(b[i] + amount * falloff, 0, 1);
+            a[i] = clamp(a[i] - amount * 0.32 * falloff, 0, 1);
+          }
+        }
+      }
+
+      function weakenCircle(cx, cy, radius, amount) {
+        const r = Math.ceil(radius) + 1;
+
+        for (let dy = -r; dy <= r; dy += 1) {
+          for (let dx = -r; dx <= r; dx += 1) {
+            const x = Math.floor(cx + dx);
+            const y = Math.floor(cy + dy);
+            if (x < 1 || x >= simW - 1 || y < 1 || y >= simH - 1) continue;
+
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d > radius) continue;
+
+            const falloff = 1 - d / radius;
+            const i = idx(x, y);
+            b[i] = clamp(b[i] - amount * falloff, 0, 1);
+            a[i] = clamp(a[i] + amount * 0.6 * falloff, 0, 1);
+          }
+        }
+      }
+
+      function renderLiquid() {
+        const image = ctx.createImageData(viewW, viewH);
+        const pixels = image.data;
+        const threshold = 0.195;
+
+        for (let y = 0; y < viewH; y += 1) {
+          const sy = clamp(Math.floor((y / Math.max(1, viewH - 1)) * (simH - 1)), 1, simH - 2);
+
+          for (let x = 0; x < viewW; x += 1) {
+            const sx = clamp(Math.floor((x / Math.max(1, viewW - 1)) * (simW - 1)), 1, simW - 2);
+            const i = idx(sx, sy);
+            const v = b[i];
+            const neighborMax = Math.max(b[idx(sx - 1, sy)], b[idx(sx + 1, sy)], b[idx(sx, sy - 1)], b[idx(sx, sy + 1)]);
+            const neighborMin = Math.min(b[idx(sx - 1, sy)], b[idx(sx + 1, sy)], b[idx(sx, sy - 1)], b[idx(sx, sy + 1)]);
+            const contour = (v > threshold && neighborMin < threshold) || (v < threshold && neighborMax > threshold);
+            const membrane = contour || (v > 0.25 && Math.abs(neighborMax - neighborMin) > 0.09);
+            const p = (x + y * viewW) * 4;
+
+            if (membrane) {
+              const grain = Math.sin(sx * 12.9898 + sy * 78.233) * 43758.5453;
+              const noise = grain - Math.floor(grain);
+              const ink = 210 + Math.floor(noise * 45);
+              pixels[p] = ink;
+              pixels[p + 1] = ink;
+              pixels[p + 2] = ink;
+              pixels[p + 3] = 255;
+            } else {
+              pixels[p] = 0;
+              pixels[p + 1] = 0;
+              pixels[p + 2] = 0;
+              pixels[p + 3] = 255;
+            }
+          }
+        }
+
+        ctx.putImageData(image, 0, 0);
+      }
+
+      function dropletTransferPulse(phase) {
+        const inPulse = smoothstep(0.08, 0.28, phase);
+        const outPulse = smoothstep(0.69, 0.9, phase);
+        return clamp(inPulse - outPulse, 0, 1);
+      }
+
+      function suddenMiddleBurst(phase) {
+        const inBurst = smoothstep(0.424, 0.43, phase);
+        const outBurst = smoothstep(0.437, 0.45, phase);
+        return clamp(inBurst - outBurst, 0, 1);
+      }
+
+      function fastForwardWindow(phase) {
+        const attack = smoothstep(0.19, 0.205, phase);
+        const release = smoothstep(0.285, 0.335, phase);
+        return clamp(attack - release, 0, 1);
+      }
+
+      function acceleratedPhase(phase) {
+        if (phase < 0.18) {
+          return phase * 0.24;
+        }
+
+        if (phase < 0.36) {
+          return 0.0432 + (phase - 0.18) * 6.8;
+        }
+
+        return wrap01(0.2672 + (phase - 0.36) * 0.22);
+      }
+
+      function dropletEase(x) {
+        return x < 0.5
+          ? 4 * x * x * x
+          : 1 - Math.pow(-2 * x + 2, 3) / 2;
+      }
+
+      setup();
+    </script>
+  </body>
+</html>

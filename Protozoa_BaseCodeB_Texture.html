@@ -1,0 +1,1114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Protozoa_BaseCodeB_Texture</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: rgb(248, 248, 248);
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+      }
+
+      canvas {
+        display: block;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.11.11/lib/p5.min.js"></script>
+  </head>
+  <body>
+    <script>
+/// Protozoa_BaseCodeB_1_레기나
+
+let simW = 160;
+let simH = 160;
+
+let grid = [];
+let next = [];
+
+let dA = 1.0;
+let dB = 0.34;
+let feed = 0.052;
+let kill = 0.061;
+
+let crawlT = 0;
+let worm = [];
+let behaviorCycle = 0;
+let letterPositionCycle = 0;
+let letterBodyAmount = 0;
+
+function setup() {
+  createCanvas(400, 400);
+  pixelDensity(1);
+  frameRate(30);
+
+  initGrid();
+  initWorm();
+}
+
+function draw() {
+  background(248);
+
+  crawlT += 0.016;
+
+  // Keep the reaction texture, but let the mucus dry before it spreads widely.
+  for (let i = 0; i < 2; i++) {
+    updateReaction();
+  }
+
+  // Repeat: roam, trace an A head-first, briefly read as A, then crawl away.
+  behaviorCycle = floor(frameCount / 1080);
+  letterPositionCycle = behaviorCycle;
+  let lifeCycle = (frameCount % 1080) / 1080;
+
+  guideProtozoa(lifeCycle);
+
+  // coming from outside the circle frame
+  //if (frameCount % 22 === 0 && letterPhase < 0.25) {
+  //seedTinyOrganisms();
+  //}
+
+  drawResult();
+  drawSoftSpine();
+  drawCuticleInclusions();
+  drawCuticleGlints();
+  drawFrame();
+}
+
+function initGrid() {
+  grid = [];
+  next = [];
+
+  for (let x = 0; x < simW; x++) {
+    grid[x] = [];
+    next[x] = [];
+
+    for (let y = 0; y < simH; y++) {
+      grid[x][y] = { a: 1, b: 0 };
+      next[x][y] = { a: 1, b: 0 };
+    }
+  }
+}
+
+function initWorm() {
+  worm = [];
+
+  // already existing inside petri dish
+  // A long, visibly segmented protozoan resting along the lower dish.
+  for (let i = 0; i < 18; i++) {
+    let restingAngle = 2.2 + i * 0.085;
+    worm.push({
+      x: simW / 2 + cos(restingAngle) * 48,
+      y: simH / 2 + sin(restingAngle) * 48,
+      phase: random(TWO_PI),
+    });
+  }
+}
+
+function guideProtozoa(lifeCycle) {
+  let traceStart = 0.28;
+  let traceEnd = 0.58;
+  let holdEnd = 0.79;
+  let releaseEnd = 0.88;
+  let traceProgress = smoothstep(traceStart, traceEnd, lifeCycle);
+  let forming = smoothstep(traceStart, traceStart + 0.08, lifeCycle) *
+    (1 - smoothstep(holdEnd, releaseEnd, lifeCycle));
+  let letterBody = smoothstep(traceEnd - 0.08, traceEnd + 0.04, lifeCycle) *
+    (1 - smoothstep(holdEnd, releaseEnd, lifeCycle));
+  letterBodyAmount = letterBody;
+  let path = getAPath(letterPositionCycle, letterBody);
+  let head;
+
+  if (lifeCycle < traceStart) {
+    head = pointOnRoamPath(lifeCycle / traceStart);
+  } else if (lifeCycle < holdEnd) {
+    head = pointOnPath(path, traceProgress);
+  } else {
+    let departure = smoothstep(holdEnd, 1, lifeCycle);
+    let leaveStart = pointOnPath(path, 1);
+    let roaming = pointOnRoamPath(departure);
+    head = {
+      x: lerp(leaveStart.x, roaming.x, departure),
+      y: lerp(leaveStart.y, roaming.y, departure),
+    };
+  }
+
+  // Consistent protozoan wriggle through every phase of the cycle.
+  head.x += sin(crawlT * 2.1) * lerp(1.35, 0.45, letterBody);
+  head.y += cos(crawlT * 1.75) * lerp(1.0, 0.35, letterBody);
+  head = confineToDish(head.x, head.y, 64);
+
+  worm[0].x = lerp(worm[0].x, head.x, 0.14);
+  worm[0].y = lerp(worm[0].y, head.y, 0.14);
+
+  for (let i = 1; i < worm.length; i++) {
+    let prev = worm[i - 1];
+    let cur = worm[i];
+
+    let dx = prev.x - cur.x;
+    let dy = prev.y - cur.y;
+    let ang = atan2(dy, dx);
+
+    let rearAmount = i / (worm.length - 1);
+    let crawlWave = sin(crawlT * 2.15 - i * 0.5);
+    let rearPush = max(0, crawlWave) * smoothstep(0.48, 1, rearAmount);
+    let spacing = 1.45 - rearPush * 0.34;
+
+    let followStrength = lerp(0.3, 0.035, letterBody);
+    cur.x = lerp(cur.x, prev.x - cos(ang) * spacing, followStrength);
+    cur.y = lerp(cur.y, prev.y - sin(ang) * spacing, followStrength);
+
+    // inchworm push: body bunches, raises, then stretches forward
+    let pushWave = sin(crawlT * 2.15 - i * 0.5);
+    let bunch = max(0, pushWave);
+
+    cur.x +=
+      cos(ang) * bunch * (0.18 + rearAmount * 0.52) * (1 - letterBody);
+    cur.y +=
+      sin(ang) * bunch * (0.18 + rearAmount * 0.52) * (1 - letterBody);
+
+    // tiny side instability, not snake movement
+    let tremble = sin(crawlT * 2.8 + i * 0.52) *
+      lerp(0.12, 0.42, rearAmount);
+    cur.x += cos(ang + HALF_PI) * tremble * (1 - letterBody * 0.72);
+    cur.y += sin(ang + HALF_PI) * tremble * (1 - letterBody * 0.72);
+
+    let safe = confineToDish(cur.x, cur.y, 64);
+    cur.x = safe.x;
+    cur.y = safe.y;
+  }
+
+  // The compact crawler stretches into one thick connected A, then compresses.
+  for (let i = 0; i < worm.length; i++) {
+    let bodyT = 1 - i / (worm.length - 1);
+    let target = pointOnPath(path, bodyT);
+    let nearby = pointOnPath(path, constrain(bodyT + 0.025, 0, 1));
+    let targetAngle = atan2(nearby.y - target.y, nearby.x - target.x);
+    let bodyRipple = sin(crawlT * 3.1 - i * 0.9) * 1.65 * letterBody;
+    target.x += cos(targetAngle + HALF_PI) * bodyRipple;
+    target.y += sin(targetAngle + HALF_PI) * bodyRipple;
+    target = confineToDish(target.x, target.y, 57);
+    worm[i].x = lerp(worm[i].x, target.x, letterBody * 0.42);
+    worm[i].y = lerp(worm[i].y, target.y, letterBody * 0.42);
+  }
+
+  preventBodyOverlap(letterBody);
+
+  drawWormBody(forming);
+  drawSegmentTexture(forming);
+  drawTinyLegs(forming);
+  drawFlagellaTail(forming);
+  drawMucusSplatter(forming);
+
+}
+
+function preventBodyOverlap(letterBody) {
+  let minimumDistance = lerp(6.5, 8.5, letterBody);
+  let minimumDistanceSq = minimumDistance * minimumDistance;
+
+  // Non-neighboring plates repel; nearby plates remain free to flex together.
+  for (let pass = 0; pass < 3; pass++) {
+    for (let i = 0; i < worm.length; i++) {
+      for (let j = i + 4; j < worm.length; j++) {
+        let a = worm[i];
+        let b = worm[j];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let distanceSq = dx * dx + dy * dy;
+
+        if (distanceSq >= minimumDistanceSq) continue;
+
+        let distance = sqrt(max(0.0001, distanceSq));
+        let overlap = minimumDistance - distance;
+        let nx = dx / distance;
+        let ny = dy / distance;
+        let strength = overlap * lerp(0.12, 0.2, letterBody);
+
+        a.x -= nx * strength;
+        a.y -= ny * strength;
+        b.x += nx * strength;
+        b.y += ny * strength;
+      }
+    }
+  }
+
+  for (let p of worm) {
+    let safe = confineToDish(p.x, p.y, 62);
+    p.x = safe.x;
+    p.y = safe.y;
+  }
+}
+
+function pointOnRoamPath(t) {
+  let points = [
+    { x: 48, y: 108 },
+    { x: 30, y: 76 },
+    { x: 47, y: 37 },
+    { x: 82, y: 20 },
+    { x: 119, y: 36 },
+    { x: 137, y: 76 },
+    { x: 121, y: 119 },
+    { x: 82, y: 139 },
+    { x: 48, y: 119 },
+  ];
+
+  let total = constrain(t, 0, 1) * (points.length - 1);
+  let index = min(floor(total), points.length - 2);
+  let local = smoothstep(0, 1, total - index);
+
+  return {
+    x: lerp(points[index].x, points[index + 1].x, local),
+    y: lerp(points[index].y, points[index + 1].y, local),
+  };
+}
+
+// Same petri-dish restraint used elsewhere, applied to this protozoa's segments.
+function confineToDish(x, y, radius) {
+  let dx = x - simW / 2;
+  let dy = y - simH / 2;
+  let distance = sqrt(dx * dx + dy * dy);
+
+  if (distance <= radius || distance === 0) {
+    return { x, y };
+  }
+
+  let scale = radius / distance;
+  return {
+    x: simW / 2 + dx * scale,
+    y: simH / 2 + dy * scale,
+  };
+}
+
+function getAPath(cycle, movingAmount = 0) {
+  let driftX = sin(crawlT * 0.42) * 11 * movingAmount;
+  let driftY = cos(crawlT * 0.33) * 8 * movingAmount;
+  let centerX = 80 + sin(cycle * 2.17) * 22 + driftX;
+  let centerY = 82 + cos(cycle * 1.63) * 15 + driftY;
+  let scale = 0.72 + (sin(cycle * 3.11) * 0.5 + 0.5) * 0.18;
+  let rotation = sin(cycle * 1.37) * 0.3 +
+    sin(crawlT * 0.38) * 0.18 * movingAmount;
+  let basePoints = [
+    { x: -29, y: 43 },
+    { x: 2, y: -43 },
+    { x: 31, y: 39 },
+    { x: 18, y: 6 },
+    { x: -15, y: 9 },
+  ];
+
+  return basePoints.map((point, index) => {
+    let px = point.x * scale;
+    let py = point.y * scale;
+    let wobble = sin(crawlT * 1.55 + index * 1.9) *
+      lerp(2.8, 4.2, movingAmount);
+    return confineToDish(
+      centerX + cos(rotation) * px - sin(rotation) * py + wobble,
+      centerY + sin(rotation) * px + cos(rotation) * py + wobble * 0.55,
+      57
+    );
+  });
+}
+
+function pointOnPath(points, t) {
+  t = constrain(t, 0, 1);
+
+  let segCount = points.length - 1;
+  let total = t * segCount;
+  let idx = floor(total);
+  let local = total - idx;
+
+  idx = constrain(idx, 0, segCount - 1);
+
+  let p1 = points[idx];
+  let p2 = points[idx + 1];
+
+  let curve = sin(local * PI) * sin(crawlT * 1.35 + idx * 1.7) * 5.5;
+
+  let ang = atan2(p2.y - p1.y, p2.x - p1.x);
+
+  return {
+    x: lerp(p1.x, p2.x, local) + cos(ang + HALF_PI) * curve,
+    y: lerp(p1.y, p2.y, local) + sin(ang + HALF_PI) * curve,
+  };
+}
+
+function drawWormBody(amount) {
+  // Paint a continuous inner spine first so the body can never break into beads.
+  for (let i = 1; i < worm.length; i++) {
+    let prev = worm[i - 1];
+    let cur = worm[i];
+    guideSmallLine(prev.x, prev.y, cur.x, cur.y, 7.5, 0.015);
+  }
+
+  for (let i = 0; i < worm.length; i++) {
+    let p = worm[i];
+    let alongBody = i / (worm.length - 1);
+
+    let bodyPulse = sin(crawlT * 2.2 + i * 0.55) * 0.7;
+    let taper = lerp(3.8, -2.8, alongBody);
+    let rumpPulse = max(0, sin(crawlT * 2.15 - i * 0.5)) *
+      smoothstep(0.55, 1, alongBody) * 1.8;
+    let thick = floor(
+      8.5 + sin(alongBody * PI) * 3.2 + taper + bodyPulse + rumpPulse
+    );
+
+    addSoftCircle(floor(p.x), floor(p.y), thick, 0.021 + amount * 0.005);
+
+    if (i % 6 === 0) {
+      weakenCircle(floor(p.x), floor(p.y), 2, 0.006);
+    }
+  }
+
+  let head = worm[0];
+  let neck = worm[min(3, worm.length - 1)];
+  let headAngle = atan2(head.y - neck.y, head.x - neck.x);
+  let feelerSpread = 0.62;
+
+  addSoftCircle(floor(head.x), floor(head.y), 17, 0.052);
+  addSoftCircle(
+    floor(head.x - cos(headAngle) * 4),
+    floor(head.y - sin(headAngle) * 4),
+    14,
+    0.034
+  );
+
+  let faceX = head.x + cos(headAngle) * 5;
+  let faceY = head.y + sin(headAngle) * 5;
+  weakenCircle(floor(faceX), floor(faceY), 5, 0.042);
+
+  // A broken collar and crown of short spines make the head feel armored.
+  let collar = worm[min(2, worm.length - 1)];
+  let collarNormal = headAngle + HALF_PI;
+  weakenLine(
+    collar.x + cos(collarNormal) * 10,
+    collar.y + sin(collarNormal) * 10,
+    collar.x - cos(collarNormal) * 10,
+    collar.y - sin(collarNormal) * 10,
+    1,
+    0.024
+  );
+
+  for (let spike = -1; spike <= 1; spike++) {
+    let spikeAngle = headAngle + spike * 0.5;
+    let rootX = head.x + cos(spikeAngle) * 11;
+    let rootY = head.y + sin(spikeAngle) * 11;
+    let twitch = sin(crawlT * 2.7 + spike * 1.4) * 0.18;
+    let spikeLength = 3.2 + abs(spike) * 0.6;
+    let tip = confineToDish(
+      rootX + cos(spikeAngle + twitch) * spikeLength,
+      rootY + sin(spikeAngle + twitch) * spikeLength,
+      66
+    );
+    guideSmallLine(rootX, rootY, tip.x, tip.y, 1, 0.215);
+  }
+
+  weakenCircle(
+    floor(head.x + cos(headAngle + HALF_PI) * 5),
+    floor(head.y + sin(headAngle + HALF_PI) * 5),
+    2,
+    0.03
+  );
+
+  // Short hooked mouthparts make the front feel less cute and more predatory.
+  for (let side = -1; side <= 1; side += 2) {
+    let jawAngle = headAngle + side * 0.45;
+    let jawBaseX = head.x + cos(jawAngle) * 8;
+    let jawBaseY = head.y + sin(jawAngle) * 8;
+    let jawTip = confineToDish(
+      jawBaseX + cos(headAngle - side * 0.22) * 6,
+      jawBaseY + sin(headAngle - side * 0.22) * 6,
+      66
+    );
+    guideSmallLine(head.x, head.y, jawBaseX, jawBaseY, 2.5, 0.025);
+    guideSmallLine(jawBaseX, jawBaseY, jawTip.x, jawTip.y, 1.4, 0.03);
+  }
+
+  for (let side = -1; side <= 1; side += 2) {
+    let feelerAngle = headAngle + side * feelerSpread;
+    let feelerX = head.x + cos(feelerAngle) * 6;
+    let feelerY = head.y + sin(feelerAngle) * 6;
+    let safeFeeler = confineToDish(feelerX, feelerY, 66);
+    addSoftCircle(floor(safeFeeler.x), floor(safeFeeler.y), 3, 0.032);
+  }
+
+  // Two pale pores keep the front visually different from the flagellated tail.
+  let poreX = head.x + cos(headAngle) * 2;
+  let poreY = head.y + sin(headAngle) * 2;
+  weakenCircle(
+    floor(poreX + cos(headAngle + HALF_PI) * 2.4),
+    floor(poreY + sin(headAngle + HALF_PI) * 2.4),
+    1,
+    0.025
+  );
+  weakenCircle(
+    floor(poreX + cos(headAngle - HALF_PI) * 2.4),
+    floor(poreY + sin(headAngle - HALF_PI) * 2.4),
+    1,
+    0.025
+  );
+}
+
+function drawSegmentTexture(amount) {
+  for (let i = 1; i < worm.length - 1; i++) {
+    let prev = worm[i - 1];
+    let p = worm[i];
+    let nextPoint = worm[i + 1];
+    let alongBody = i / (worm.length - 1);
+    let angle = atan2(nextPoint.y - prev.y, nextPoint.x - prev.x);
+    let normal = angle + HALF_PI;
+    let bodyRadius =
+      8 + sin(alongBody * PI) * 3 + lerp(3, -2, alongBody);
+
+    // Pale transverse grooves separate the torso into armored repeating plates.
+    if (i % 2 === 0) {
+      let grooveHalf = max(4, bodyRadius * 0.72);
+      weakenLine(
+        p.x + cos(normal) * grooveHalf,
+        p.y + sin(normal) * grooveHalf,
+        p.x - cos(normal) * grooveHalf,
+        p.y - sin(normal) * grooveHalf,
+        1,
+        0.018
+      );
+    }
+
+    // Dense micro-fuzz hugs the plate edges without creating branch silhouettes.
+    for (let side = -1; side <= 1; side += 2) {
+      let outwardAngle = normal + (side < 0 ? PI : 0);
+
+      for (let hair = -1; hair <= 1; hair++) {
+        let rootAlong = hair * 0.75;
+        let rootDistance = bodyRadius * 0.79;
+        let rootX =
+          p.x + cos(normal) * rootDistance * side + cos(angle) * rootAlong;
+        let rootY =
+          p.y + sin(normal) * rootDistance * side + sin(angle) * rootAlong;
+        let flex = sin(crawlT * 0.7 + i * 1.3 + hair + side) * 0.035;
+        let hairAngle = outwardAngle + flex + hair * 0.1;
+        let hairLength = 1.15 + ((i + hair + side + 8) % 3) * 0.3;
+        let tip = confineToDish(
+          rootX + cos(hairAngle) * hairLength,
+          rootY + sin(hairAngle) * hairLength,
+          66
+        );
+
+        guideSmallLine(
+          rootX,
+          rootY,
+          tip.x,
+          tip.y,
+          1,
+          0.195 + amount * 0.006
+        );
+      }
+    }
+
+    // Small pits break the plates into a rough microscopic cuticle.
+    if (i % 3 === 1) {
+      let pitSide = i % 2 === 0 ? 1 : -1;
+      weakenCircle(
+        floor(p.x + cos(normal) * bodyRadius * 0.35 * pitSide),
+        floor(p.y + sin(normal) * bodyRadius * 0.35 * pitSide),
+        1,
+        0.025
+      );
+    }
+  }
+}
+
+function drawTinyLegs(amount) {
+  let legPairs = [3, 7, 11, 15];
+
+  for (let pair = 0; pair < legPairs.length; pair++) {
+    let i = legPairs[pair];
+    let p = worm[i];
+    let prev = worm[max(0, i - 2)];
+    let nextPoint = worm[min(worm.length - 1, i + 2)];
+
+    let ang = atan2(nextPoint.y - prev.y, nextPoint.x - prev.x);
+
+    for (let side = -1; side <= 1; side += 2) {
+      // Diagonal pairs alternate: planted feet push back while opposites reach.
+      let gaitGroup = (pair + (side > 0 ? 1 : 0)) % 2;
+      let step = sin(crawlT * 3.4 + gaitGroup * PI);
+      let lift = max(0, step);
+      let plant = max(0, -step);
+      let legAngle = ang + HALF_PI * side - step * 0.34;
+      let kneeLength = 9 + lift * 2.5 - plant * 0.8;
+      let footLength = 7 + plant * 1.8;
+
+      let knee = confineToDish(
+        p.x + cos(legAngle) * kneeLength,
+        p.y + sin(legAngle) * kneeLength,
+        65
+      );
+      let foot = confineToDish(
+        knee.x + cos(legAngle + side * 0.32 - plant * 0.28) * footLength,
+        knee.y + sin(legAngle + side * 0.32 - plant * 0.28) * footLength,
+        66
+      );
+
+      guideSmallLine(p.x, p.y, knee.x, knee.y, 4.8, 0.022);
+      addSoftCircle(floor(knee.x), floor(knee.y), 5, 0.026);
+      guideSmallLine(knee.x, knee.y, foot.x, foot.y, 3.8, 0.022);
+      addSoftCircle(floor(foot.x), floor(foot.y), 5, 0.03);
+
+      for (let claw = -1; claw <= 1; claw += 2) {
+        let clawAngle = legAngle + side * 0.32 + claw * 0.32;
+        let clawX = foot.x + cos(clawAngle) * 5;
+        let clawY = foot.y + sin(clawAngle) * 5;
+        let safeClaw = confineToDish(clawX, clawY, 66);
+        guideSmallLine(foot.x, foot.y, safeClaw.x, safeClaw.y, 1.6, 0.022);
+      }
+    }
+  }
+}
+
+function drawMucusSplatter(amount) {
+  // Tiny clustered droplets avoid rigid square patches on the simulation grid.
+  if (frameCount % 10 !== 0) return;
+
+  let bodyIndex = floor(random(worm.length * 0.35, worm.length));
+  let p = worm[bodyIndex];
+  let angle = random(TWO_PI);
+  let distance = random(7, 17);
+  let clusterSize = floor(random(2, 5));
+
+  for (let i = 0; i < clusterSize; i++) {
+    let drop = confineToDish(
+      p.x + cos(angle) * distance + random(-3, 3),
+      p.y + sin(angle) * distance + random(-3, 3),
+      66
+    );
+    addSoftCircle(
+      floor(drop.x),
+      floor(drop.y),
+      1,
+      0.205 + amount * 0.01
+    );
+  }
+}
+
+function drawFlagellaTail(amount) {
+  let tail = worm[worm.length - 1];
+  let prev = worm[max(0, worm.length - 5)];
+
+  let baseAng = atan2(tail.y - prev.y, tail.x - prev.x);
+
+  let lastX = tail.x;
+  let lastY = tail.y;
+
+  for (let i = 1; i < 11; i++) {
+    let p = i / 10;
+    let wave = sin(crawlT * 1.8 + p * 4.0) * 0.8 * (1 - p);
+
+    let x = tail.x + cos(baseAng) * i * 1.25 + cos(baseAng + HALF_PI) * wave;
+
+    let y = tail.y + sin(baseAng) * i * 1.25 + sin(baseAng + HALF_PI) * wave;
+
+    let safeTail = confineToDish(x, y, 66);
+    let tailStrength = lerp(0.024, 0.012, p) + amount * 0.001;
+    guideSmallLine(lastX, lastY, safeTail.x, safeTail.y, 1, tailStrength);
+
+    lastX = safeTail.x;
+    lastY = safeTail.y;
+  }
+}
+
+function revealLetterPath(path, amount) {
+  let reveal = smoothstep(0.25, 1.0, amount);
+
+  for (let s = 0; s < path.length - 1; s++) {
+    let p1 = path[s];
+    let p2 = path[s + 1];
+
+    let segmentReveal = constrain(reveal * 1.35 - s * 0.18, 0, 1);
+    let steps = floor(75 * segmentReveal);
+
+    for (let i = 0; i < steps; i++) {
+      let p = i / 74;
+
+      let ang = atan2(p2.y - p1.y, p2.x - p1.x);
+      let wiggle = sin(p * PI) * sin(crawlT * 2.2 + s) * 5;
+
+      let x = lerp(p1.x, p2.x, p) + cos(ang + HALF_PI) * wiggle;
+      let y = lerp(p1.y, p2.y, p) + sin(ang + HALF_PI) * wiggle;
+
+      let thick = floor(3 + sin(p * PI) * 2);
+
+      addSoftCircle(floor(x), floor(y), thick, 0.012 * amount);
+    }
+  }
+
+  if (amount < 0.28) {
+    weakenLine(43, 137, 82, 34, 5, 0.012);
+    weakenLine(82, 34, 116, 132, 5, 0.012);
+    weakenLine(61, 93, 101, 90, 4, 0.012);
+  }
+}
+
+function guideSmallLine(x1, y1, x2, y2, thickness, strength) {
+  let steps = 14;
+
+  for (let i = 0; i < steps; i++) {
+    let p = i / (steps - 1);
+    let x = lerp(x1, x2, p);
+    let y = lerp(y1, y2, p);
+
+    addSoftCircle(floor(x), floor(y), floor(thickness), strength);
+  }
+}
+
+function seedTinyOrganisms() {
+  let a = random(TWO_PI);
+  let r = random(20, 60);
+
+  let x = floor(simW / 2 + cos(a) * r);
+  let y = floor(simH / 2 + sin(a) * r);
+
+  addSoftCircle(x, y, floor(random(2, 4)), 0.18);
+}
+
+function weakenLine(x1, y1, x2, y2, thickness, amount) {
+  let steps = 80;
+
+  for (let i = 0; i < steps; i++) {
+    let p = i / (steps - 1);
+
+    let x = floor(lerp(x1, x2, p));
+    let y = floor(lerp(y1, y2, p));
+
+    weakenCircle(x, y, thickness, amount);
+  }
+}
+
+function addSoftCircle(cx, cy, r, amount) {
+  for (let dx = -r; dx <= r; dx++) {
+    for (let dy = -r; dy <= r; dy++) {
+      let x = cx + dx;
+      let y = cy + dy;
+
+      if (x >= 0 && x < simW && y >= 0 && y < simH) {
+        let d = sqrt(dx * dx + dy * dy);
+
+        if (d <= r) {
+          let falloff = 1 - d / r;
+          grid[x][y].b = constrain(grid[x][y].b + amount * falloff, 0, 1);
+          grid[x][y].a = constrain(
+            grid[x][y].a - amount * 0.35 * falloff,
+            0,
+            1
+          );
+        }
+      }
+    }
+  }
+}
+
+function weakenCircle(cx, cy, r, amount) {
+  for (let dx = -r; dx <= r; dx++) {
+    for (let dy = -r; dy <= r; dy++) {
+      let x = cx + dx;
+      let y = cy + dy;
+
+      if (x >= 0 && x < simW && y >= 0 && y < simH) {
+        let d = sqrt(dx * dx + dy * dy);
+
+        if (d <= r) {
+          let falloff = 1 - d / r;
+          grid[x][y].b = constrain(grid[x][y].b - amount * falloff, 0, 1);
+          grid[x][y].a = constrain(grid[x][y].a + amount * falloff, 0, 1);
+        }
+      }
+    }
+  }
+}
+
+function updateReaction() {
+  for (let x = 1; x < simW - 1; x++) {
+    for (let y = 1; y < simH - 1; y++) {
+      let a = grid[x][y].a;
+      let b = grid[x][y].b;
+
+      let reaction = a * b * b;
+
+      let newA = a + dA * laplaceA(x, y) - reaction + feed * (1 - a);
+
+      let newB =
+        b + dB * laplaceB(x, y) + reaction - (kill + feed + 0.034) * b;
+
+      next[x][y].a = constrain(newA, 0, 1);
+      next[x][y].b = constrain(newB, 0, 1);
+    }
+  }
+
+  let temp = grid;
+  grid = next;
+  next = temp;
+}
+
+function laplaceA(x, y) {
+  let sum = 0;
+
+  sum += grid[x][y].a * -1;
+  sum += grid[x - 1][y].a * 0.2;
+  sum += grid[x + 1][y].a * 0.2;
+  sum += grid[x][y - 1].a * 0.2;
+  sum += grid[x][y + 1].a * 0.2;
+
+  sum += grid[x - 1][y - 1].a * 0.05;
+  sum += grid[x + 1][y - 1].a * 0.05;
+  sum += grid[x - 1][y + 1].a * 0.05;
+  sum += grid[x + 1][y + 1].a * 0.05;
+
+  return sum;
+}
+
+function laplaceB(x, y) {
+  let sum = 0;
+
+  sum += grid[x][y].b * -1;
+  sum += grid[x - 1][y].b * 0.2;
+  sum += grid[x + 1][y].b * 0.2;
+  sum += grid[x][y - 1].b * 0.2;
+  sum += grid[x][y + 1].b * 0.2;
+
+  sum += grid[x - 1][y - 1].b * 0.05;
+  sum += grid[x + 1][y - 1].b * 0.05;
+  sum += grid[x - 1][y + 1].b * 0.05;
+  sum += grid[x + 1][y + 1].b * 0.05;
+
+  return sum;
+}
+
+function drawSoftSpine() {
+  let scaleX = width / simW;
+  let scaleY = height / simH;
+  let visibility = lerp(1, 0.42, letterBodyAmount);
+
+  push();
+  strokeCap(ROUND);
+
+  // Broken internal plates read as a flexible skeleton, not a second thin worm.
+  drawingContext.save();
+  drawingContext.shadowColor = "rgba(32, 32, 32, 0.10)";
+  drawingContext.shadowBlur = 4;
+
+  for (let i = 1; i < worm.length - 2; i += 2) {
+    let a = worm[i];
+    let b = worm[i + 1];
+    let inset = 0.22;
+    let ax = lerp(a.x, b.x, inset);
+    let ay = lerp(a.y, b.y, inset);
+    let bx = lerp(a.x, b.x, 1 - inset);
+    let by = lerp(a.y, b.y, 1 - inset);
+
+    stroke(52, 31 * visibility);
+    strokeWeight(5.1);
+    line(ax * scaleX, ay * scaleY, bx * scaleX, by * scaleY);
+
+    stroke(248, 39 * visibility);
+    strokeWeight(1.25);
+    line(
+      (ax - 0.22) * scaleX,
+      (ay - 0.22) * scaleY,
+      (bx - 0.22) * scaleX,
+      (by - 0.22) * scaleY
+    );
+  }
+  drawingContext.restore();
+
+  noStroke();
+  for (let i = 2; i < worm.length - 1; i += 3) {
+    let p = worm[i];
+    fill(50, 30 * visibility);
+    circle(p.x * scaleX, p.y * scaleY, 5.2);
+    fill(248, 43 * visibility);
+    circle((p.x - 0.22) * scaleX, (p.y - 0.22) * scaleY, 1.65);
+  }
+
+  pop();
+}
+
+function drawResult() {
+  loadPixels();
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      let sx = map(x + 0.5, 0, width, 0, simW);
+      let sy = map(y + 0.5, 0, height, 0, simH);
+      let b = sampleB(sx, sy);
+
+      let dx = x - width / 2;
+      let dy = y - height / 2;
+      let insideCircle = dx * dx + dy * dy < 182 * 182;
+
+      let col = 248;
+
+      if (insideCircle) {
+        let coverage = smoothstep(0.14, 0.27, b) *
+          (1 - smoothstep(0.64, 0.88, b));
+
+        if (coverage > 0.001) {
+          let gx = sampleB(sx + 0.8, sy) - sampleB(sx - 0.8, sy);
+          let gy = sampleB(sx, sy + 0.8) - sampleB(sx, sy - 0.8);
+          let edge = constrain(sqrt(gx * gx + gy * gy) * 6.5, 0, 1);
+          let directionalLight = constrain((-gx - gy) * 5.2, -1, 1);
+          let bodyTone = 229;
+          let rimShadow = edge * (9 + max(0, -directionalLight) * 24);
+          let rimLight = edge * max(0, directionalLight) * 24;
+          let membrane = constrain(bodyTone - rimShadow + rimLight, 176, 248);
+          let stableCoverage = smoothstep(0.08, 0.42, coverage);
+          col = lerp(248, membrane, stableCoverage * 0.82);
+        }
+      }
+
+      let index = (x + y * width) * 4;
+
+      pixels[index + 0] = col;
+      pixels[index + 1] = col;
+      pixels[index + 2] = col;
+      pixels[index + 3] = 255;
+    }
+  }
+
+  updatePixels();
+}
+
+function nearestBodyPlate(x, y) {
+  let bestIndex = 0;
+  let bestDistance = Infinity;
+  let bestNormalDistance = 0;
+
+  for (let i = 0; i < worm.length; i++) {
+    let p = worm[i];
+    let dx = x - p.x;
+    let dy = y - p.y;
+    let distance = dx * dx + dy * dy;
+
+    if (distance < bestDistance) {
+      let prev = worm[max(0, i - 1)];
+      let nextPoint = worm[min(worm.length - 1, i + 1)];
+      let angle = atan2(nextPoint.y - prev.y, nextPoint.x - prev.x);
+      bestDistance = distance;
+      bestIndex = i;
+      bestNormalDistance = dx * cos(angle + HALF_PI) + dy * sin(angle + HALF_PI);
+    }
+  }
+
+  return { index: bestIndex, normalDistance: bestNormalDistance };
+}
+
+function sampleB(x, y) {
+  x = constrain(x, 0, simW - 1.001);
+  y = constrain(y, 0, simH - 1.001);
+
+  let x0 = floor(x);
+  let y0 = floor(y);
+  let x1 = min(x0 + 1, simW - 1);
+  let y1 = min(y0 + 1, simH - 1);
+  let tx = x - x0;
+  let ty = y - y0;
+  let top = lerp(grid[x0][y0].b, grid[x1][y0].b, tx);
+  let bottom = lerp(grid[x0][y1].b, grid[x1][y1].b, tx);
+  return lerp(top, bottom, ty);
+}
+
+function textureHash(x, y) {
+  return fract(sin(x * 127.1 + y * 311.7) * 43758.5453);
+}
+
+function fract(value) {
+  return value - floor(value);
+}
+
+function isCuticleAt(sx, sy) {
+  if (sx < 1 || sx >= simW - 1 || sy < 1 || sy >= simH - 1) return false;
+  let b = sampleB(sx, sy);
+  let coverage = smoothstep(0.14, 0.27, b) *
+    (1 - smoothstep(0.64, 0.88, b));
+  return coverage > 0.48;
+}
+
+function drawCuticleInclusions() {
+  for (let sy = 2; sy < simH - 2; sy++) {
+    for (let sx = 2; sx < simW - 2; sx++) {
+      if (!isCuticleAt(sx, sy)) continue;
+
+      let plate = nearestBodyPlate(sx, sy);
+      let particleThreshold = plate.index % 4 === 1 ? 0.91 : 0.968;
+      if (textureHash(sx, sy) < particleThreshold) continue;
+
+      let seed = textureHash(sx + 41, sy - 19);
+      let x = map(sx + 0.5, 0, simW, 0, width);
+      let y = map(sy + 0.5, 0, simH, 0, height);
+      let size = 0.55 + seed * (plate.index % 4 === 1 ? 1.7 : 1.05);
+
+      noStroke();
+      fill(88, 16 + seed * 20);
+      ellipse(x, y, size * 1.5, size);
+
+      // Pale veil makes each granule feel suspended beneath the membrane.
+      fill(248, 42);
+      ellipse(x - size * 0.12, y - size * 0.12, size * 1.65, size * 1.1);
+    }
+  }
+
+  // Larger cloudy organs follow selected body segments beneath the membrane.
+  let organSegments = [2, 5, 9, 13];
+  let organs = [];
+
+  for (let index = 0; index < organSegments.length; index++) {
+    let bodyIndex = min(organSegments[index], worm.length - 1);
+    let p = worm[bodyIndex];
+    let prev = worm[max(0, bodyIndex - 1)];
+    let nextPoint = worm[min(worm.length - 1, bodyIndex + 1)];
+    let angle = atan2(nextPoint.y - prev.y, nextPoint.x - prev.x);
+    let x = map(p.x, 0, simW, 0, width);
+    let y = map(p.y, 0, simH, 0, height);
+    let pulse = 1 + sin(crawlT * 1.15 + index * 1.9) * 0.08;
+    organs.push({ x, y, angle, pulse, index });
+  }
+
+  // Short soft bridges connect neighboring chambers without a visible centerline.
+  strokeCap(ROUND);
+  for (let index = 0; index < organs.length - 1; index++) {
+    let from = organs[index];
+    let to = organs[index + 1];
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    let distance = sqrt(dx * dx + dy * dy);
+    let ux = dx / max(1, distance);
+    let uy = dy / max(1, distance);
+    let fromInset = 6 + from.index * 0.5;
+    let toInset = 6 + to.index * 0.5;
+
+    stroke(96, 10);
+    strokeWeight(8);
+    line(
+      from.x + ux * fromInset,
+      from.y + uy * fromInset,
+      to.x - ux * toInset,
+      to.y - uy * toInset
+    );
+
+    stroke(248, 14);
+    strokeWeight(3.5);
+    line(
+      from.x + ux * fromInset,
+      from.y + uy * fromInset,
+      to.x - ux * toInset,
+      to.y - uy * toInset
+    );
+  }
+
+  for (let organ of organs) {
+    let { x, y, angle, pulse, index } = organ;
+
+    push();
+    translate(x, y);
+    rotate(angle);
+    noStroke();
+    fill(86, 17);
+    ellipse(0, 0, (16 + index * 1.2) * pulse, (9 + index * 0.8) / pulse);
+    fill(248, 34);
+    ellipse(-2, -1.2, 7 * pulse, 4 / pulse);
+    pop();
+  }
+
+  noStroke();
+}
+
+function drawCuticleGlints() {
+  strokeWeight(0.5);
+
+  for (let sy = 2; sy < simH - 2; sy += 2) {
+    for (let sx = 2; sx < simW - 2; sx += 2) {
+      if (!isCuticleAt(sx, sy) || textureHash(sx + 7, sy + 83) < 0.76) {
+        continue;
+      }
+
+      let gx = grid[sx + 1][sy].b - grid[sx - 1][sy].b;
+      let gy = grid[sx][sy + 1].b - grid[sx][sy - 1].b;
+      let edge = abs(gx) + abs(gy);
+      if (edge < 0.055) continue;
+
+      let x = map(sx, 0, simW, 0, width);
+      let y = map(sy, 0, simH, 0, height);
+      let tangent = atan2(gy, gx) + HALF_PI;
+      let length = 1 + textureHash(sx - 13, sy + 5) * 2.2;
+      stroke(255, 55 + edge * 350);
+      line(
+        x - cos(tangent) * length,
+        y - sin(tangent) * length,
+        x + cos(tangent) * length,
+        y + sin(tangent) * length
+      );
+    }
+  }
+
+  noStroke();
+}
+
+function drawFrame() {
+  push();
+  noFill();
+
+  // Soft interior glass shadow gives the dish a shallow physical depth.
+  stroke(70, 14);
+  strokeWeight(10);
+  circle(width / 2, height / 2 + 1.5, 358);
+
+  stroke(90, 34);
+  strokeWeight(5.5);
+  circle(width / 2, height / 2 + 1.2, 366);
+
+  stroke(34, 92);
+  strokeWeight(1.1);
+  circle(width / 2, height / 2, 365);
+
+  stroke(255, 205);
+  strokeWeight(2.2);
+  arc(width / 2 - 0.8, height / 2 - 0.8, 362, 362, PI * 1.08, PI * 1.72);
+
+  stroke(105, 40);
+  strokeWeight(1.3);
+  arc(width / 2 + 0.8, height / 2 + 1.2, 368, 368, 0.05, PI * 0.72);
+
+  // Deterministic microscopic scratches keep the glass distinct from the body.
+  strokeWeight(0.45);
+  for (let i = 0; i < 18; i++) {
+    let angle = textureHash(i * 7 + 3, i * 11 + 5) * TWO_PI;
+    let radius = 42 + textureHash(i * 13 + 9, i * 5 + 17) * 125;
+    let x = width / 2 + cos(angle) * radius;
+    let y = height / 2 + sin(angle) * radius;
+    let scratchAngle = angle + HALF_PI +
+      (textureHash(i + 31, i + 67) - 0.5) * 0.8;
+    let length = 2 + textureHash(i + 19, i + 23) * 5;
+    stroke(i % 3 === 0 ? 255 : 75, i % 3 === 0 ? 45 : 28);
+    line(
+      x - cos(scratchAngle) * length,
+      y - sin(scratchAngle) * length,
+      x + cos(scratchAngle) * length,
+      y + sin(scratchAngle) * length
+    );
+  }
+
+  pop();
+}
+
+function smoothstep(edge0, edge1, x) {
+  x = constrain((x - edge0) / (edge1 - edge0), 0, 1);
+  return x * x * (3 - 2 * x);
+}
+    </script>
+  </body>
+</html>

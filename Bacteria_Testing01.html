@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bacteria_Testing01</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        background: #000;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+      }
+
+      canvas {
+        display: block;
+        width: min(100vw, 86vh);
+        height: 100vh;
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="kinetic" aria-label="Vertical kinetic typography with pink and green horizontal trails"></canvas>
+
+    <script>
+      const canvas = document.querySelector("#kinetic");
+      const ctx = canvas.getContext("2d", { alpha: false });
+      const mask = document.createElement("canvas");
+      const maskCtx = mask.getContext("2d", { willReadFrequently: true });
+
+      const TAU = Math.PI * 2;
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+      const easeOut = (value) => 1 - Math.pow(1 - value, 3.8);
+      const wrap = (value) => ((value % 1) + 1) % 1;
+      const rand = (x, y, salt = 1) => {
+        const value = Math.sin(x * 91.345 + y * 47.123 + salt * 413.77) * 10000;
+        return value - Math.floor(value);
+      };
+
+      const words = [
+        { text: "S", y: 0.185 },
+        { text: "P", y: 0.275 },
+        { text: "E", y: 0.365 },
+        { text: "C", y: 0.455 },
+        { text: "I", y: 0.545 },
+        { text: "M", y: 0.635 },
+        { text: "E", y: 0.725 },
+        { text: "N", y: 0.815 },
+      ];
+
+      const glyphs = {
+        S: ["11111", "10000", "10000", "11110", "00001", "00001", "11110"],
+        P: ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
+        E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+        C: ["01111", "10000", "10000", "10000", "10000", "10000", "01111"],
+        I: ["11111", "00100", "00100", "00100", "00100", "00100", "11111"],
+        M: ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
+        N: ["10001", "11001", "10101", "10011", "10001", "10001", "10001"],
+      };
+
+      const laneProfiles = [
+        { delay: 0.00, tempo: 0.46 },
+        { delay: 0.09, tempo: 0.50 },
+        { delay: 0.18, tempo: 0.43 },
+        { delay: 0.29, tempo: 0.52 },
+        { delay: 0.22, tempo: 0.47 },
+        { delay: 0.13, tempo: 0.54 },
+        { delay: 0.06, tempo: 0.44 },
+        { delay: 0.16, tempo: 0.49 },
+      ];
+
+      let viewW = 0;
+      let viewH = 0;
+      let spacing = 12;
+      let dots = [];
+      let lastFrame = 0;
+
+      function resize() {
+        const cssW = Math.min(window.innerWidth, window.innerHeight * 0.86);
+        const cssH = window.innerHeight;
+        viewW = Math.round(cssW);
+        viewH = Math.round(cssH);
+
+        canvas.width = viewW;
+        canvas.height = viewH;
+        canvas.style.width = `${cssW}px`;
+        canvas.style.height = `${cssH}px`;
+
+        mask.width = viewW;
+        mask.height = viewH;
+        spacing = clamp(Math.round(viewW / 52), 9, 13);
+        buildDots();
+      }
+
+      function buildDots() {
+        dots = [];
+        const cell = clamp(Math.min(viewW * 0.022, viewH * 0.012), 8, 14);
+
+        for (let lane = 0; lane < words.length; lane += 1) {
+          const word = words[lane];
+          const glyph = glyphs[word.text];
+          const centerY = viewH * word.y;
+          const startY = centerY - ((glyph.length - 1) * cell) / 2;
+
+          for (const side of [-1, 1]) {
+            const centerX = viewW * (side < 0 ? 0.18 : 0.82);
+            const startX = centerX - ((glyph[0].length - 1) * cell) / 2;
+
+            for (let row = 0; row < glyph.length; row += 1) {
+              for (let col = 0; col < glyph[row].length; col += 1) {
+                if (glyph[row][col] !== "1") continue;
+
+                const x = startX + col * cell;
+                const y = startY + row * cell;
+                const edge =
+                  row === 0 ||
+                  row === glyph.length - 1 ||
+                  col === 0 ||
+                  col === glyph[row].length - 1 ||
+                  glyph[row - 1]?.[col] !== "1" ||
+                  glyph[row + 1]?.[col] !== "1" ||
+                  glyph[row][col - 1] !== "1" ||
+                  glyph[row][col + 1] !== "1";
+
+                dots.push({
+                  x,
+                  y,
+                  side,
+                  lane,
+                  edge,
+                  seed: rand(x, y, 4),
+                  delay: 0,
+                  radius: cell * 0.33,
+                });
+              }
+            }
+          }
+        }
+      }
+
+      function dot(x, y, radius, color, alpha) {
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, TAU);
+        ctx.fill();
+      }
+
+      function outlinedDot(x, y, radius, fill, stroke, lineWidth) {
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = fill;
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = lineWidth;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, TAU);
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      function rowTravel(time, point, rewind = 0) {
+        const edgeDistance = Math.min(point.lane, words.length - 1 - point.lane);
+        const profile = laneProfiles[point.lane];
+        const laneDelay = edgeDistance * 0.045 + profile.delay;
+        const sideDelay = point.side < 0 ? 0 : 0.025;
+        const cycle = wrap(time * profile.tempo - laneDelay - sideDelay - rewind);
+        const reach = 0.84;
+
+        if (cycle < 0.5) {
+          return easeOut(cycle / 0.5) * reach;
+        }
+
+        return reach - easeOut((cycle - 0.5) / 0.5) * reach;
+      }
+
+      function positionFor(point, time, rewind = 0) {
+        const travel = rowTravel(time, point, rewind);
+        const amplitude = viewW * 0.48;
+        const drift = Math.sin(time * 4.8 + point.seed * TAU) * spacing * 0.04;
+        return {
+          x: point.x - point.side * travel * amplitude + drift,
+          y: point.y,
+          travel,
+        };
+      }
+
+      function drawGuideLines(time) {
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+        for (let i = 0; i < words.length; i += 1) {
+          const y = viewH * words[i].y;
+          ctx.fillStyle = "#130713";
+          ctx.fillRect(viewW * 0.5 - spacing * 0.2, y - spacing * 4, spacing * 0.4, spacing * 8);
+        }
+      }
+
+      function drawFrame(now) {
+        if (now - lastFrame < 1000 / 45) {
+          requestAnimationFrame(drawFrame);
+          return;
+        }
+        lastFrame = now;
+
+        const time = now / 1000;
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.fillStyle = "rgba(0, 0, 0, 0.11)";
+        ctx.fillRect(0, 0, viewW, viewH);
+        drawGuideLines(time);
+
+        ctx.globalCompositeOperation = "source-over";
+        for (const point of dots) {
+          const current = positionFor(point, time);
+          const previous = positionFor(point, time, 0.018);
+          const x = current.x;
+          const y = current.y;
+          const radius = point.radius;
+          const velocity = x - previous.x;
+          const speed = Math.abs(velocity);
+          const tail = Math.sign(velocity || point.side);
+          const resting = speed < spacing * 0.1;
+
+          for (let i = 18; i >= 1; i -= 1) {
+            const past = positionFor(point, time, i * 0.022);
+            const shadowRadius = radius * (0.58 + i * 0.023);
+            const color = i > 14 ? "#00a832" : i > 10 ? "#08771d" : i > 6 ? "#8d2389" : "#d64acb";
+            dot(past.x, past.y, shadowRadius, color, i > 14 ? 0.95 : 0.86);
+          }
+
+          if (speed > spacing * 0.12 && point.edge && point.seed > 0.62) {
+            dot(x - tail * 15, y, radius * 0.68, "#00d63d", 1);
+            if (point.seed > 0.86) {
+              dot(x - tail * 25, y, radius * 0.46, "#008f2b", 1);
+            }
+          } else {
+            dot(x - tail * 8, y, radius * 0.76, "#bb35ad", 1);
+          }
+
+          outlinedDot(
+            x,
+            y,
+            radius * (point.edge ? 1.16 : 0.78),
+            point.edge ? "#ffb2f1" : "#d948c9",
+            point.edge ? "#ffe2fb" : "#ff87eb",
+            Math.max(0.45, radius * (point.edge ? 0.18 : 0.08))
+          );
+        }
+
+        ctx.globalCompositeOperation = "source-over";
+        ctx.globalAlpha = 1;
+        requestAnimationFrame(drawFrame);
+      }
+
+      window.addEventListener("resize", resize);
+      resize();
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, viewW, viewH);
+      requestAnimationFrame(drawFrame);
+    </script>
+  </body>
+</html>

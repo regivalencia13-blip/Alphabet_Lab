@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Amoeba_BaseCodeB_Texture+Color_DeepSea</title>
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        background: rgb(1, 7, 15);
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+      }
+
+      canvas {
+        display: block;
+      }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.11.11/lib/p5.min.js"></script>
+  </head>
+  <body>
+    <script>
+      let simW = 160;
+      let simH = 160;
+      
+      let grid = [];
+      let next = [];
+      
+      let dA = 1.0;
+      let dB = 0.42;
+      let feed = 0.052;
+      let kill = 0.061;
+      
+      let cx, cy;
+      let bodyAngle = 0;
+      let crawlT = 0;
+      let limbs = [];
+      let nextTwitchFrame = 0;
+      let twitchStrength = 0;
+      let twitchAngle = 0;
+      let twitchLimb = 0;
+      let twitchShape = 1;
+      let twitchStartFrame = -1000;
+      let twitchDuration = 24;
+      let crawlX, crawlY;
+      let crawlCycle = -1;
+      let crawlDirection = 0;
+      let previousCrawlDirection = 0;
+      let crawlStartX, crawlStartY;
+      let crawlAnchorX, crawlAnchorY;
+      let foodDots = [];
+      let activeFood = -1;
+      let gulpStrength = 0;
+      
+      function setup() {
+        createCanvas(400, 400);
+        pixelDensity(1);
+        frameRate(30);
+      
+        initGrid();
+      
+        cx = simW / 2;
+        cy = simH / 2;
+        crawlX = cx;
+        crawlY = cy;
+        crawlStartX = cx;
+        crawlStartY = cy;
+        crawlAnchorX = cx;
+        crawlAnchorY = cy;
+      
+        initLimbs();
+        initFoodDots();
+        scheduleTwitch();
+        seedAmoebaBody();
+      }
+      
+      function draw() {
+        background(1, 7, 15);
+      
+        crawlT += 0.018;
+
+        updateTwitch();
+        updateFoodDots();
+      
+        let crawlPhase = updateCrawl();
+        cx = crawlX;
+        cy = crawlY;
+        bodyAngle = crawlDirection * 0.12 + sin(crawlT * 0.33) * 0.18;
+      
+        for (let i = 0; i < 5; i++) {
+          updateReaction();
+        }
+      
+        guideAmoeba(crawlPhase);
+        retractLooseLiquid();
+      
+        // The organism lives freely first, then periodically resolves into an A.
+        let letterAge = max(0, frameCount - 180);
+        let letterPhase = (letterAge % 840) / 840;
+        let letterArrive = smoothstep(0.12, 0.28, letterPhase);
+        let letterLeave = 1 - smoothstep(0.62, 0.82, letterPhase);
+        let growA = frameCount < 180 ? 0 : letterArrive * letterLeave;
+
+        if (growA > 0.025) {
+          growLetterFromLimbs(growA);
+        }
+      
+        drawResult();
+        drawCellTexture();
+        drawFoodDots();
+        drawFrame();
+      }
+      
+      function initGrid() {
+        grid = [];
+        next = [];
+      
+        for (let x = 0; x < simW; x++) {
+          grid[x] = [];
+          next[x] = [];
+      
+          for (let y = 0; y < simH; y++) {
+            grid[x][y] = { a: 1, b: 0 };
+            next[x][y] = { a: 1, b: 0 };
+          }
+        }
+      }
+      
+      function seedAmoebaBody() {
+        addSoftCircle(cx, cy, 11, 0.9);
+      
+        for (let i = 0; i < 8; i++) {
+          let a = random(TWO_PI);
+          let r = random(8, 18);
+      
+          addSoftCircle(
+            floor(cx + cos(a) * r),
+            floor(cy + sin(a) * r),
+            floor(random(4, 7)),
+            0.55
+          );
+        }
+      }
+
+      function initLimbs() {
+        limbs = [];
+
+        for (let i = 0; i < 8; i++) {
+          limbs.push({
+            offset: random(1),
+            speed: random(0.055, 0.1),
+            angleSeed: random(1000),
+            bendSeed: random(1000),
+            reach: random(42, 66)
+          });
+        }
+      }
+
+      function initFoodDots() {
+        foodDots = [];
+
+        for (let i = 0; i < 15; i++) {
+          spawnFoodDot(i);
+        }
+      }
+
+      function spawnFoodDot(index) {
+        let angle = random(TWO_PI);
+        let radius = random(34, 61);
+        foodDots[index] = {
+          x: simW / 2 + cos(angle) * radius,
+          y: simH / 2 + sin(angle) * radius,
+          size: random(1.7, 3.2),
+          energy: 1,
+          respawn: 0
+        };
+      }
+
+      function chooseFoodTarget() {
+        let best = -1;
+        let bestScore = Infinity;
+
+        for (let i = 0; i < foodDots.length; i++) {
+          let food = foodDots[i];
+          if (food.energy <= 0) continue;
+
+          let distance = dist(crawlX, crawlY, food.x, food.y);
+          if (distance < 16 || distance > 58) continue;
+
+          let score = distance + random(12);
+          if (score < bestScore) {
+            bestScore = score;
+            best = i;
+          }
+        }
+
+        return best;
+      }
+
+      function updateFoodDots() {
+        gulpStrength *= 0.8;
+
+        for (let i = 0; i < foodDots.length; i++) {
+          let food = foodDots[i];
+
+          if (food.energy <= 0) {
+            food.respawn -= 1;
+            if (food.respawn <= 0) spawnFoodDot(i);
+          }
+        }
+      }
+
+      function guideFoodDots() {
+        for (let food of foodDots) {
+          if (food.energy <= 0) continue;
+          let pulse = 0.85 + sin(crawlT * 2.2 + food.x) * 0.15;
+          addSoftCircle(floor(food.x), floor(food.y), floor(food.size), 0.026 * food.energy * pulse);
+        }
+      }
+
+      function drawFoodDots() {
+        noStroke();
+
+        for (let food of foodDots) {
+          if (food.energy <= 0) continue;
+          let x = map(food.x, 0, simW, 0, width);
+          let y = map(food.y, 0, simH, 0, height);
+          let size = food.size * 2.5;
+
+          let tilt = textureHash(floor(food.x), floor(food.y)) * PI;
+          stroke(121, 255, 166, 120 * food.energy);
+          strokeWeight(0.65);
+          line(
+            x - cos(tilt) * size * 0.42,
+            y - sin(tilt) * size * 0.42,
+            x + cos(tilt) * size * 0.42,
+            y + sin(tilt) * size * 0.42
+          );
+          stroke(238, 255, 249, 170 * food.energy);
+          point(x - cos(tilt + HALF_PI) * size * 0.18, y - sin(tilt + HALF_PI) * size * 0.18);
+          noStroke();
+        }
+      }
+
+      function scheduleTwitch() {
+        nextTwitchFrame = frameCount + floor(random(170, 300));
+      }
+
+      function updateTwitch() {
+        if (frameCount >= nextTwitchFrame) {
+          twitchStrength = random(0.68, 0.95);
+          twitchAngle = random(TWO_PI);
+          twitchLimb = floor(random(limbs.length));
+          twitchShape = random() < 0.5 ? -1 : 1;
+          twitchStartFrame = frameCount;
+          scheduleTwitch();
+        }
+
+        twitchStrength *= 0.88;
+      }
+
+      function updateCrawl() {
+        let rawCycle = frameCount / 330;
+        let cycle = floor(rawCycle);
+        let phase = rawCycle - cycle;
+
+        if (cycle !== crawlCycle) {
+          crawlCycle = cycle;
+          previousCrawlDirection = crawlDirection;
+          crawlStartX = crawlX;
+          crawlStartY = crawlY;
+          activeFood = chooseFoodTarget();
+
+          if (activeFood >= 0) {
+            crawlAnchorX = foodDots[activeFood].x;
+            crawlAnchorY = foodDots[activeFood].y;
+            crawlDirection = atan2(crawlAnchorY - crawlY, crawlAnchorX - crawlX);
+          } else {
+            crawlDirection = noise(912, cycle * 0.47) * TWO_PI * 1.35;
+            let stride = 17 + noise(333, cycle * 0.61) * 12;
+            crawlAnchorX = crawlStartX + cos(crawlDirection) * stride;
+            crawlAnchorY = crawlStartY + sin(crawlDirection) * stride;
+          }
+
+          let safeAnchor = confineToDish(crawlAnchorX, crawlAnchorY, 62);
+          crawlAnchorX = safeAnchor.x;
+          crawlAnchorY = safeAnchor.y;
+        }
+
+        let turn = smoothstep(0, 0.24, phase);
+        let direction = lerpAngle(previousCrawlDirection, crawlDirection, turn);
+        let latch = smoothstep(0.1, 0.3, phase);
+        let contraction = smoothstep(0.32, 0.86, phase);
+        let release = smoothstep(0.87, 0.98, phase);
+        let ropeLength = dist(crawlStartX, crawlStartY, crawlAnchorX, crawlAnchorY);
+        let shortenedLength = lerp(ropeLength, 8, contraction);
+        let anchorAngle = atan2(crawlStartY - crawlAnchorY, crawlStartX - crawlAnchorX);
+        let pulledX = crawlAnchorX + cos(anchorAngle) * shortenedLength;
+        let pulledY = crawlAnchorY + sin(anchorAngle) * shortenedLength;
+
+        if (latch > 0.08) {
+          let creepingPull = 0.008 + contraction * 0.05;
+          crawlX = lerp(crawlX, pulledX, creepingPull);
+          crawlY = lerp(crawlY, pulledY, creepingPull);
+        }
+
+        if (activeFood >= 0 && contraction > 0.88 && foodDots[activeFood].energy > 0) {
+          let food = foodDots[activeFood];
+          food.energy = max(0, food.energy - 0.075);
+
+          if (food.energy <= 0) {
+            food.respawn = floor(random(260, 520));
+            gulpStrength = 1.35;
+            twitchStrength = max(twitchStrength, 0.82);
+            twitchStartFrame = frameCount;
+            twitchShape = 1;
+          }
+        }
+
+        if (crawlX < 45 || crawlX > simW - 45 || crawlY < 45 || crawlY > simH - 45) {
+          crawlDirection = atan2(simH / 2 - crawlY, simW / 2 - crawlX);
+        }
+
+        crawlX = constrain(crawlX, 47, simW - 47);
+        crawlY = constrain(crawlY, 47, simH - 47);
+
+        return { phase, direction, pull: contraction, latch, release };
+      }
+      
+      function guideAmoeba(crawlState) {
+        let crawlPhase = crawlState.phase;
+        let pull = crawlState.pull;
+        let reach = smoothstep(0.03, 0.28, crawlPhase) *
+          (1 - smoothstep(0.76, 0.98, crawlPhase));
+        let bodyStretch = 1 + reach * (1 - pull) * 0.48;
+        let spasmX = 1 + twitchStrength * 0.44 * twitchShape;
+        let spasmY = 1 - twitchStrength * 0.28 * twitchShape;
+        let gulpBulge = 1 + gulpStrength * 0.38;
+        spasmX = constrain(spasmX, 0.48, 1.75);
+        spasmY = constrain(spasmY, 0.55, 1.55);
+
+        guideOval(
+          cx,
+          cy,
+          24 * bodyStretch * spasmX * gulpBulge,
+          17 / bodyStretch * spasmY * gulpBulge,
+          crawlDirection,
+          0.031 + twitchStrength * 0.009
+        );
+
+        for (let i = 0; i < limbs.length; i++) {
+          let limb = limbs[i];
+          let leader = i === crawlCycle % limbs.length ||
+            i === (crawlCycle + 1) % limbs.length;
+          let support = (i + crawlCycle) % 3 === 0;
+
+          if (!leader && !support) {
+            continue;
+          }
+
+          let supportPhase = (crawlPhase + limb.offset * 0.42) % 1;
+          let phase = leader ? crawlPhase : supportPhase;
+          let extendEnd = leader ? 0.58 : 0.52;
+          let retractStart = leader ? 0.82 : 0.68;
+          let extend = smoothstep(0.02, extendEnd, phase);
+          let retract = 1 - smoothstep(retractStart, 0.96, phase);
+          let grow = extend * retract;
+
+          let side = i === (crawlCycle + 1) % limbs.length ? 0.42 : 0;
+          let supportAngle = noise(limb.angleSeed, crawlCycle * 0.31) * TWO_PI;
+          let a = leader ? crawlDirection + side : supportAngle;
+
+          if (i === twitchLimb) {
+            a += twitchStrength * sin(frameCount * 0.28 + limb.angleSeed) * 0.18;
+          }
+
+          let leaderReach = leader ? 1.22 : 0.68;
+          let len = 5 + limb.reach * grow * leaderReach;
+          let wiggle = map(noise(limb.bendSeed, crawlCycle * 0.29), 0, 1, -8, 8);
+          let rootSpread = leader ? 2 : 5;
+          let x1 = cx + cos(a) * rootSpread;
+          let y1 = cy + sin(a) * rootSpread;
+          let x2 = leader
+            ? lerp(cx + cos(a) * len, crawlAnchorX, smoothstep(0.28, 0.5, phase))
+            : cx + cos(a) * len;
+          let y2 = leader
+            ? lerp(cy + sin(a) * len, crawlAnchorY, smoothstep(0.28, 0.5, phase))
+            : cy + sin(a) * len;
+          x2 += cos(a + HALF_PI) * wiggle * grow;
+          y2 += sin(a + HALF_PI) * wiggle * grow;
+          let safeTip = bendAtDishWall(x2, y2, a, 1, grow);
+          x2 = safeTip.x;
+          y2 = safeTip.y;
+
+          let strength = 0.024 + grow * (leader ? 0.044 : 0.027);
+          guideCurvedLimb(x1, y1, x2, y2, a, grow, strength);
+          addSoftCircle(floor(x2), floor(y2), floor(2 + grow * (leader ? 5 : 3.5)), strength * 1.35);
+
+          if (phase > retractStart) {
+            weakenCurvedLimb(x1, y1, x2, y2, a, grow, leader ? 0.034 : 0.028);
+          }
+        }
+      
+        guideInnerCore(pull);
+      }
+
+      function guideInnerCore(pull) {
+        let lag = 4 + pull * 8;
+        let coreX = cx - cos(crawlDirection) * lag;
+        let coreY = cy - sin(crawlDirection) * lag;
+        let pulse = 1 + sin(crawlT * 1.9) * 0.12;
+        let mutationX = 1 - twitchStrength * 0.36 * twitchShape;
+        let mutationY = 1 + twitchStrength * 0.5 * twitchShape;
+        let coreRX = (8.5 - pull * 1.8) * pulse * constrain(mutationX, 0.5, 1.6) * (1 - gulpStrength * 0.22);
+        let coreRY = (6 + pull * 1.5) / pulse * constrain(mutationY, 0.5, 1.8) * (1 + gulpStrength * 0.38);
+
+        weakenOval(coreX, coreY, coreRX, coreRY, crawlDirection + HALF_PI, 0.046);
+        weakenCircle(floor(coreX), floor(coreY), 3, 0.018);
+      }
+
+      function lerpAngle(from, to, amount) {
+        let difference = atan2(sin(to - from), cos(to - from));
+        return from + difference * amount;
+      }
+
+      function confineToDish(x, y, radius) {
+        let dx = x - simW / 2;
+        let dy = y - simH / 2;
+        let distance = sqrt(dx * dx + dy * dy);
+
+        if (distance <= radius) {
+          return { x, y };
+        }
+
+        let scale = radius / distance;
+        return {
+          x: simW / 2 + dx * scale,
+          y: simH / 2 + dy * scale
+        };
+      }
+
+      function bendAtDishWall(x, y, limbAngle, progress, grow) {
+        let dx = x - simW / 2;
+        let dy = y - simH / 2;
+        let distance = sqrt(dx * dx + dy * dy);
+        let bend = smoothstep(53, 65, distance);
+
+        if (bend <= 0) {
+          return { x, y };
+        }
+
+        let polarAngle = atan2(dy, dx);
+        let bendSide = sin(limbAngle * 2.7 + crawlCycle * 1.9) < 0 ? -1 : 1;
+        let curl = bendSide * bend * progress * (0.3 + grow * 0.42);
+        let safeRadius = min(distance, 64 - bend * 3);
+
+        return {
+          x: simW / 2 + cos(polarAngle + curl) * safeRadius,
+          y: simH / 2 + sin(polarAngle + curl) * safeRadius
+        };
+      }
+
+      function retractLooseLiquid() {
+        for (let x = 1; x < simW - 1; x++) {
+          for (let y = 1; y < simH - 1; y++) {
+            let distance = dist(x, y, cx, cy);
+            let absorption = distance > 49 ? 0.017 : 0.004;
+            let dishDistance = dist(x, y, simW / 2, simH / 2);
+
+            if (dishDistance > 67) {
+              absorption = 0.055;
+            }
+
+            grid[x][y].b = max(0, grid[x][y].b - absorption);
+            grid[x][y].a = min(1, grid[x][y].a + absorption * 0.65);
+          }
+        }
+      }
+      
+      function growLetterFromLimbs(amount) {
+        let strength = 0.058 * amount;
+        let breathe = sin(crawlT * 0.82) * 2.2;
+        let letterScale = 0.92;
+        let letterX = (x) => cx + (x - simW / 2) * letterScale;
+        let letterY = (y) => cy + (y - simH / 2) * letterScale;
+      
+        // A recognizable skeleton that still bends and crawls like tissue.
+        let top = {
+          x: letterX(80) + sin(crawlT * 0.73) * 2.5,
+          y: letterY(34) + cos(crawlT * 0.61) * 2.5
+        };
+      
+        let leftBase = {
+          x: letterX(42) + sin(crawlT * 0.57 + 2) * 2.5,
+          y: letterY(136) + cos(crawlT * 0.43) * 2
+        };
+      
+        let rightBase = {
+          x: letterX(118) + sin(crawlT * 0.49 + 4) * 3,
+          y: letterY(136) + cos(crawlT * 0.52 + 1) * 2.5
+        };
+
+        let heart = {
+          x: letterX(80) + cos(crawlT * 0.67) * 1.5,
+          y: letterY(88) + breathe
+        };
+      
+        let crossL = {
+          x: letterX(61) + sin(crawlT * 0.72) * 2,
+          y: letterY(91) + breathe
+        };
+      
+        let crossR = {
+          x: letterX(100) + sin(crawlT * 0.64 + 3) * 2.5,
+          y: letterY(90) + breathe
+        };
+      
+        let legGrow = smoothstep(0.06, 0.72, amount);
+        let tetherGrow = smoothstep(0.02, 0.24, amount) *
+          (1 - smoothstep(0.42, 0.7, amount));
+        let leftRoot = {
+          x: lerp(leftBase.x, top.x, 0.26),
+          y: lerp(leftBase.y, top.y, 0.26)
+        };
+
+        growStroke(leftBase, top, legGrow, 4, strength * 1.24);
+        growStroke(rightBase, top, legGrow * 0.98, 4, strength * 1.24);
+        growStroke(heart, leftRoot, tetherGrow, 3, strength * 0.8);
+      
+        let crossGrow = smoothstep(0.44, 0.76, amount);
+        growStroke(crossL, crossR, crossGrow, 4, strength * 1.5);
+      
+        if (amount > 0.48) {
+          addSoftCircle(floor(heart.x), floor(heart.y), 5, strength * 1.25);
+          addSoftCircle(floor(top.x), floor(top.y), 4, strength * 1.15);
+        }
+      
+        if (amount < 0.48) {
+          weakenLine(leftBase.x, leftBase.y, top.x, top.y, 3, 0.002);
+          weakenLine(rightBase.x, rightBase.y, top.x, top.y, 3, 0.002);
+        }
+      }
+      
+      function growStroke(p1, p2, amount, thickness, strength) {
+        let steps = 80;
+        let visibleSteps = floor(steps * amount);
+      
+        for (let i = 0; i < visibleSteps; i++) {
+          let p = i / (steps - 1);
+      
+          let curve =
+            sin(p * PI) *
+            sin(crawlT * 1.6 + p1.x * 0.1) *
+            8;
+      
+          let angle = atan2(p2.y - p1.y, p2.x - p1.x);
+      
+          let x =
+            lerp(p1.x, p2.x, p) +
+            cos(angle + HALF_PI) * curve;
+      
+          let y =
+            lerp(p1.y, p2.y, p) +
+            sin(angle + HALF_PI) * curve;
+          let bounded = bendAtDishWall(x, y, angle, p, amount);
+          x = bounded.x;
+          y = bounded.y;
+      
+          let thick =
+            floor(thickness + sin(p * PI) * 3);
+      
+          addSoftCircle(floor(x), floor(y), thick, strength);
+        }
+      }
+      
+      function guideOval(cx, cy, rx, ry, rot, strength) {
+        for (let i = 0; i < 80; i++) {
+          let a = TWO_PI * i / 80;
+      
+          let x = cx + cos(a) * rx * cos(rot) - sin(a) * ry * sin(rot);
+          let y = cy + cos(a) * rx * sin(rot) + sin(a) * ry * cos(rot);
+          let bounded = confineToDish(x, y, 63);
+          x = bounded.x;
+          y = bounded.y;
+      
+          addSoftCircle(floor(x), floor(y), 4, strength);
+        }
+      }
+      
+      function weakenOval(cx, cy, rx, ry, rot, amount) {
+        for (let i = 0; i < 50; i++) {
+          let a = TWO_PI * i / 50;
+      
+          let x = cx + cos(a) * rx * cos(rot) - sin(a) * ry * sin(rot);
+          let y = cy + cos(a) * rx * sin(rot) + sin(a) * ry * cos(rot);
+      
+          weakenCircle(floor(x), floor(y), 3, amount);
+        }
+      }
+      
+      function guideCurvedLimb(x1, y1, x2, y2, angle, grow, strength) {
+        let steps = 45;
+        let visibleSteps = max(3, floor(steps * smoothstep(0, 0.72, grow)));
+      
+        for (let i = 0; i < visibleSteps; i++) {
+          let p = i / (steps - 1);
+      
+          let curve =
+            sin(p * PI) *
+            sin(crawlT * 1.7 + angle * 3) *
+            12;
+      
+          let x = lerp(x1, x2, p) + cos(angle + HALF_PI) * curve;
+          let y = lerp(y1, y2, p) + sin(angle + HALF_PI) * curve;
+          let bounded = bendAtDishWall(x, y, angle, p, grow);
+          x = bounded.x;
+          y = bounded.y;
+      
+          let thick = floor(1.4 + sin(p * PI) * (3.4 + grow * 2.2));
+      
+          addSoftCircle(floor(x), floor(y), thick, strength);
+        }
+      }
+
+      function weakenCurvedLimb(x1, y1, x2, y2, angle, grow, amount) {
+        let steps = 34;
+
+        for (let i = 0; i < steps; i++) {
+          let p = i / (steps - 1);
+          let curve = sin(p * PI) * sin(crawlT * 1.7 + angle * 3) * 12;
+          let x = lerp(x1, x2, p) + cos(angle + HALF_PI) * curve;
+          let y = lerp(y1, y2, p) + sin(angle + HALF_PI) * curve;
+          let bounded = bendAtDishWall(x, y, angle, p, grow);
+          x = bounded.x;
+          y = bounded.y;
+          let thick = floor(1 + sin(p * PI) * (2 + grow * 2));
+
+          weakenCircle(floor(x), floor(y), thick, amount);
+        }
+      }
+      
+      function seedMutationSpot() {
+        let a = random(TWO_PI);
+        let r = random(14, 26);
+      
+        let x = floor(cx + cos(a) * r);
+        let y = floor(cy + sin(a) * r);
+      
+        addSoftCircle(x, y, 2, 0.07);
+      }
+      
+      function weakenLine(x1, y1, x2, y2, thickness, amount) {
+        let steps = 80;
+      
+        for (let i = 0; i < steps; i++) {
+          let p = i / (steps - 1);
+      
+          let x = floor(lerp(x1, x2, p));
+          let y = floor(lerp(y1, y2, p));
+      
+          weakenCircle(x, y, thickness, amount);
+        }
+      }
+      
+      function addSoftCircle(cx, cy, r, amount) {
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dy = -r; dy <= r; dy++) {
+            let x = cx + dx;
+            let y = cy + dy;
+      
+            if (x >= 0 && x < simW && y >= 0 && y < simH) {
+              let d = sqrt(dx * dx + dy * dy);
+      
+              if (d <= r) {
+                let falloff = 1 - d / r;
+                grid[x][y].b = constrain(grid[x][y].b + amount * falloff, 0, 1);
+                grid[x][y].a = constrain(grid[x][y].a - amount * 0.35 * falloff, 0, 1);
+              }
+            }
+          }
+        }
+      }
+      
+      function weakenCircle(cx, cy, r, amount) {
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dy = -r; dy <= r; dy++) {
+            let x = cx + dx;
+            let y = cy + dy;
+      
+            if (x >= 0 && x < simW && y >= 0 && y < simH) {
+              let d = sqrt(dx * dx + dy * dy);
+      
+              if (d <= r) {
+                let falloff = 1 - d / r;
+                grid[x][y].b = constrain(grid[x][y].b - amount * falloff, 0, 1);
+                grid[x][y].a = constrain(grid[x][y].a + amount * falloff, 0, 1);
+              }
+            }
+          }
+        }
+      }
+      
+      function updateReaction() {
+        for (let x = 1; x < simW - 1; x++) {
+          for (let y = 1; y < simH - 1; y++) {
+            let a = grid[x][y].a;
+            let b = grid[x][y].b;
+      
+            let reaction = a * b * b;
+      
+            let newA =
+              a +
+              dA * laplaceA(x, y) -
+              reaction +
+              feed * (1 - a);
+      
+            let newB =
+              b +
+              dB * laplaceB(x, y) +
+              reaction -
+              (kill + feed) * b;
+      
+            next[x][y].a = constrain(newA, 0, 1);
+            next[x][y].b = constrain(newB, 0, 1);
+          }
+        }
+      
+        let temp = grid;
+        grid = next;
+        next = temp;
+      }
+      
+      function laplaceA(x, y) {
+        let sum = 0;
+      
+        sum += grid[x][y].a * -1;
+        sum += grid[x - 1][y].a * 0.2;
+        sum += grid[x + 1][y].a * 0.2;
+        sum += grid[x][y - 1].a * 0.2;
+        sum += grid[x][y + 1].a * 0.2;
+      
+        sum += grid[x - 1][y - 1].a * 0.05;
+        sum += grid[x + 1][y - 1].a * 0.05;
+        sum += grid[x - 1][y + 1].a * 0.05;
+        sum += grid[x + 1][y + 1].a * 0.05;
+      
+        return sum;
+      }
+      
+      function laplaceB(x, y) {
+        let sum = 0;
+      
+        sum += grid[x][y].b * -1;
+        sum += grid[x - 1][y].b * 0.2;
+        sum += grid[x + 1][y].b * 0.2;
+        sum += grid[x][y - 1].b * 0.2;
+        sum += grid[x][y + 1].b * 0.2;
+      
+        sum += grid[x - 1][y - 1].b * 0.05;
+        sum += grid[x + 1][y - 1].b * 0.05;
+        sum += grid[x - 1][y + 1].b * 0.05;
+        sum += grid[x + 1][y + 1].b * 0.05;
+      
+        return sum;
+      }
+      
+      function drawResult() {
+        loadPixels();
+      
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            let sx = map(x + 0.5, 0, width, 0, simW);
+            let sy = map(y + 0.5, 0, height, 0, simH);
+            let b = sampleB(sx, sy);
+            let focusDistance = dist(sx, sy, cx, cy);
+            let inkThreshold = 0.24 + smoothstep(48, 76, focusDistance) * 0.11;
+      
+            let dx = x - width / 2;
+            let dy = y - height / 2;
+            let insideCircle = dx * dx + dy * dy < 182 * 182;
+      
+            let red = 1;
+            let green = 7;
+            let blue = 15;
+
+            if (insideCircle) {
+              let coverage = smoothstep(inkThreshold - 0.035, inkThreshold + 0.055, b);
+
+              if (coverage > 0.001) {
+                let gx = sampleB(sx + 0.8, sy) - sampleB(sx - 0.8, sy);
+                let gy = sampleB(sx, sy + 0.8) - sampleB(sx, sy - 0.8);
+                let edge = constrain(sqrt(gx * gx + gy * gy) * 5.2, 0, 1);
+                let light = constrain((-gx - gy) * 4.5, -1, 1);
+                let density = smoothstep(inkThreshold, 0.82, b);
+                // Navy, radioactive mint, pale icy blue, restrained pearl-white.
+                let navyToMint = smoothstep(0.12, 0.64, density);
+                let mintToBlue = smoothstep(0.58, 0.9, density);
+                let blueToPearl = smoothstep(0.93, 1, density);
+                let tissueR = lerp(4, 92, navyToMint);
+                let tissueG = lerp(25, 255, navyToMint);
+                let tissueB = lerp(58, 151, navyToMint);
+                tissueR = lerp(tissueR, 139, mintToBlue);
+                tissueG = lerp(tissueG, 220, mintToBlue);
+                tissueB = lerp(tissueB, 244, mintToBlue);
+                tissueR = lerp(tissueR, 226, blueToPearl);
+                tissueG = lerp(tissueG, 244, blueToPearl);
+                tissueB = lerp(tissueB, 249, blueToPearl);
+                let rimShadow = edge * (8 + max(0, -light) * 24);
+                let rimLight = edge * max(0, light) * 38;
+                let opacity = coverage * 0.94;
+
+                red = lerp(1, constrain(tissueR - rimShadow * 0.42 + rimLight * 0.42, 2, 225), opacity);
+                green = lerp(7, constrain(tissueG - rimShadow * 0.08 + rimLight * 0.72, 18, 248), opacity);
+                blue = lerp(15, constrain(tissueB + rimShadow * 0.03 + rimLight * 0.48, 35, 250), opacity);
+              }
+            }
+      
+            let index = (x + y * width) * 4;
+      
+            pixels[index + 0] = red;
+            pixels[index + 1] = green;
+            pixels[index + 2] = blue;
+            pixels[index + 3] = 255;
+          }
+        }
+      
+        updatePixels();
+      }
+
+      function sampleB(x, y) {
+        x = constrain(x, 0, simW - 1.001);
+        y = constrain(y, 0, simH - 1.001);
+
+        let x0 = floor(x);
+        let y0 = floor(y);
+        let x1 = min(x0 + 1, simW - 1);
+        let y1 = min(y0 + 1, simH - 1);
+        let tx = x - x0;
+        let ty = y - y0;
+        let top = lerp(grid[x0][y0].b, grid[x1][y0].b, tx);
+        let bottom = lerp(grid[x0][y1].b, grid[x1][y1].b, tx);
+        return lerp(top, bottom, ty);
+      }
+
+      function textureHash(x, y) {
+        return fract(sin(x * 127.1 + y * 311.7) * 43758.5453);
+      }
+
+      function fract(value) {
+        return value - floor(value);
+      }
+
+      function isBodyAt(sx, sy) {
+        if (sx < 1 || sx >= simW - 1 || sy < 1 || sy >= simH - 1) return false;
+        let focusDistance = dist(sx, sy, cx, cy);
+        let threshold = 0.24 + smoothstep(48, 76, focusDistance) * 0.11;
+        return grid[sx][sy].b > threshold;
+      }
+
+      function drawCellTexture() {
+        // Membrane refraction is derived directly from the smooth density field.
+      }
+
+      function drawCytoplasmInclusions() {
+        for (let sy = 2; sy < simH - 2; sy++) {
+          for (let sx = 2; sx < simW - 2; sx++) {
+            if (!isBodyAt(sx, sy) || textureHash(sx, sy) < 0.88) continue;
+
+            let glint = textureHash(sx + 41, sy - 19);
+            let x = map(sx + 0.5, 0, simW, 0, width) + (textureHash(sx + 5, sy + 71) - 0.5) * 1.5;
+            let y = map(sy + 0.5, 0, simH, 0, height) + (textureHash(sx - 31, sy + 11) - 0.5) * 1.5;
+            let size = 0.45 + glint * glint * 1.5;
+
+            noFill();
+            stroke(60, 24 + glint * 42);
+            strokeWeight(0.45);
+            ellipse(x, y, size * 1.3, size);
+
+            noStroke();
+            fill(248, 90 + glint * 80);
+            circle(x - size * 0.18, y - size * 0.2, max(0.35, size * 0.28));
+          }
+        }
+      }
+
+      function drawMembraneGlints() {
+        strokeWeight(0.45);
+
+        for (let sy = 2; sy < simH - 2; sy++) {
+          for (let sx = 2; sx < simW - 2; sx++) {
+            if (!isBodyAt(sx, sy) || textureHash(sx + 7, sy + 83) < 0.68) continue;
+
+            let gx = grid[sx + 1][sy].b - grid[sx - 1][sy].b;
+            let gy = grid[sx][sy + 1].b - grid[sx][sy - 1].b;
+            let edge = abs(gx) + abs(gy);
+            if (edge < 0.06) continue;
+
+            let x = map(sx, 0, simW, 0, width);
+            let y = map(sy, 0, simH, 0, height);
+            let tangent = atan2(gy, gx) + HALF_PI;
+            let length = 1 + textureHash(sx - 13, sy + 5) * 1.8;
+            stroke(248, 42 + edge * 360);
+            line(
+              x - cos(tangent) * length,
+              y - sin(tangent) * length,
+              x + cos(tangent) * length,
+              y + sin(tangent) * length
+            );
+          }
+        }
+
+        noStroke();
+      }
+      
+      function drawFrame() {
+        noFill();
+
+        // Layered glass refraction replaces the hard vector outline.
+        stroke(5, 40, 84, 75);
+        strokeWeight(5.5);
+        circle(width / 2, height / 2 + 1.2, 366);
+
+        stroke(71, 255, 159, 92);
+        strokeWeight(1.1);
+        circle(width / 2, height / 2, 365);
+
+        stroke(238, 255, 249, 175);
+        strokeWeight(2.1);
+        arc(width / 2 - 0.8, height / 2 - 0.8, 362, 362, PI * 1.08, PI * 1.72);
+
+        stroke(100, 255, 171, 55);
+        strokeWeight(1.4);
+        arc(width / 2 + 0.8, height / 2 + 1.2, 368, 368, 0.05, PI * 0.72);
+
+        stroke(76, 159, 187, 105);
+        strokeWeight(0.8);
+        arc(width / 2, height / 2, 369, 369, PI * 0.78, PI * 0.98);
+      }
+      
+      function smoothstep(edge0, edge1, x) {
+        x = constrain((x - edge0) / (edge1 - edge0), 0, 1);
+        return x * x * (3 - 2 * x);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,64 @@
+:root {
+  color-scheme: dark;
+  background: #000;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  overflow: hidden;
+  background: #000;
+}
+
+.stage {
+  display: grid;
+  width: 100vw;
+  height: 100vh;
+  place-items: center;
+  position: relative;
+  background: #000;
+}
+
+canvas {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: min(94vmin, 720px);
+  aspect-ratio: 1;
+  background: #000;
+}
+
+.specimen-label {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  grid-template-rows: repeat(4, 1fr);
+  align-items: center;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.105);
+  font-family: Impact, Haettenschweiler, "Arial Narrow Bold", sans-serif;
+  font-size: clamp(6.2rem, 20vw, 17.5rem);
+  font-weight: 900;
+  letter-spacing: 0;
+  line-height: 0.78;
+  pointer-events: none;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.specimen-label span {
+  display: block;
+}

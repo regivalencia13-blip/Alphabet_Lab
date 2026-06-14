@@ -1,0 +1,829 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Protozoa_BaseCodeA</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        background: #000;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #000;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+      }
+
+      canvas {
+        display: block;
+        width: min(100vw, 96vh);
+        height: 100vh;
+        background: #000;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="kinetic" aria-label="Living protozoa typography letter A"></canvas>
+
+    <script>
+      const canvas = document.querySelector("#kinetic");
+      const ctx = canvas.getContext("2d", { alpha: false });
+
+      const TAU = Math.PI * 2;
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+      const easeInOut = (value) => 0.5 - Math.cos(value * Math.PI) * 0.5;
+      const rand = (x, y, salt = 1) => {
+        const value = Math.sin(x * 91.345 + y * 47.123 + salt * 413.77) * 10000;
+        return value - Math.floor(value);
+      };
+
+      const letters = [
+        { text: "A", x: 0.5, y: 0.5 },
+      ];
+
+      const glyphs = {
+        L: ["10000", "10000", "10000", "10000", "10000", "10000", "11111"],
+        A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+        B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+        T: ["11111", "00100", "00100", "00100", "00100", "00100", "00100"],
+        S: ["11111", "10000", "10000", "11110", "00001", "00001", "11110"],
+        P: ["11110", "10001", "10001", "11110", "10000", "10000", "10000"],
+        E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+        C: ["01111", "10000", "10000", "10000", "10000", "10000", "01111"],
+        I: ["11111", "00100", "00100", "00100", "00100", "00100", "11111"],
+        M: ["10001", "11011", "10101", "10101", "10001", "10001", "10001"],
+        N: ["10001", "11001", "10101", "10011", "10001", "10001", "10001"],
+      };
+
+      const palette = {
+        dish: "#000",
+        dishWash: "#050908",
+        membrane: "rgba(105, 232, 194, 0.28)",
+        membraneWarm: "rgba(104, 249, 210, 0.34)",
+        cellA: "#78f0d5",
+        cellB: "#55dac9",
+        cellC: "#72c8e3",
+        cellD: "#6f5b74",
+        wetEdge: "rgba(63, 217, 255, 0.28)",
+        shadow: "rgba(0, 0, 0, 0.22)",
+        tracePink: "rgba(116, 69, 101, 0.22)",
+        traceGreen: "rgba(93, 239, 197, 0.2)",
+      };
+
+      let viewW = 0;
+      let viewH = 0;
+      let fieldW = 0;
+      let fieldH = 0;
+      let cells = [];
+      let links = [];
+      let swimmers = [];
+      let debris = [];
+      let lastFrame = 0;
+      let animationStart = 0;
+      const liquidCanvas = document.createElement("canvas");
+      const liquidCtx = liquidCanvas.getContext("2d", { willReadFrequently: true });
+
+      function resize() {
+        const cssW = Math.min(window.innerWidth, window.innerHeight * 0.96);
+        const cssH = window.innerHeight;
+        viewW = Math.round(cssW);
+        viewH = Math.round(cssH);
+
+        canvas.width = viewW;
+        canvas.height = viewH;
+        canvas.style.width = `${cssW}px`;
+        canvas.style.height = `${cssH}px`;
+        fieldW = Math.round(viewW * 0.68);
+        fieldH = Math.round(viewH * 0.68);
+        liquidCanvas.width = fieldW;
+        liquidCanvas.height = fieldH;
+
+        buildColony();
+        buildDebris();
+      }
+
+      function buildColony() {
+        cells = [];
+        links = [];
+        swimmers = [];
+        const cellStep = clamp(Math.min(viewW * 0.078, viewH * 0.052), 30, 54);
+
+        for (let lane = 0; lane < letters.length; lane += 1) {
+          const letter = letters[lane];
+          const glyph = glyphs[letter.text];
+          const centerX = viewW * letter.x;
+          const centerY = viewH * letter.y;
+          const startX = centerX - ((glyph[0].length - 1) * cellStep) / 2;
+          const startY = centerY - ((glyph.length - 1) * cellStep) / 2;
+          const indexByGrid = new Map();
+
+          for (let row = 0; row < glyph.length; row += 1) {
+            for (let col = 0; col < glyph[row].length; col += 1) {
+              if (glyph[row][col] !== "1") continue;
+
+              const normalizedCol = col / Math.max(1, glyph[row].length - 1) - 0.5;
+              const normalizedRow = row / Math.max(1, glyph.length - 1) - 0.5;
+              const bend = Math.sin(normalizedRow * Math.PI + lane * 0.9) * cellStep * (0.34 + rand(lane, col, 81) * 0.24);
+              const sag = Math.cos(normalizedCol * Math.PI + lane * 0.7) * cellStep * (0.24 + rand(lane, row, 83) * 0.18);
+              const irregularX = (rand(lane * 17 + row, col, 87) - 0.5) * cellStep * 0.66;
+              const irregularY = (rand(lane * 19 + col, row, 89) - 0.5) * cellStep * 0.56;
+              const x = startX + col * cellStep + bend + irregularX;
+              const y = startY + row * cellStep + sag + irregularY;
+              const edge =
+                row === 0 ||
+                row === glyph.length - 1 ||
+                col === 0 ||
+                col === glyph[row].length - 1 ||
+                glyph[row - 1]?.[col] !== "1" ||
+                glyph[row + 1]?.[col] !== "1" ||
+                glyph[row][col - 1] !== "1" ||
+                glyph[row][col + 1] !== "1";
+              const seed = rand(x, y, 7);
+              const tint = seed < 0.36 ? palette.cellA : seed < 0.7 ? palette.cellB : seed < 0.9 ? palette.cellC : palette.cellD;
+              const cell = {
+                x,
+                y,
+                lane,
+                row,
+                col,
+                edge,
+                seed,
+                color: tint,
+                baseRadius: cellStep * (edge ? 0.54 : 0.48) * (0.86 + rand(x, y, 11) * 0.28),
+                pulseSpeed: 0.22 + rand(x, y, 13) * 0.42,
+                pulsePhase: rand(x, y, 17) * TAU,
+                wobblePhase: rand(x, y, 19) * TAU,
+                pullPhase: rand(x, y, 41) * TAU,
+              };
+
+              indexByGrid.set(`${row},${col}`, cells.length);
+              cells.push(cell);
+            }
+          }
+
+          for (const [key, fromIndex] of indexByGrid.entries()) {
+            const [row, col] = key.split(",").map(Number);
+            const right = indexByGrid.get(`${row},${col + 1}`);
+            const down = indexByGrid.get(`${row + 1},${col}`);
+            const diagonal = indexByGrid.get(`${row + 1},${col + 1}`);
+            if (right !== undefined) links.push([fromIndex, right, rand(row, col, lane + 23)]);
+            if (down !== undefined) links.push([fromIndex, down, rand(row, col, lane + 29)]);
+            if (diagonal !== undefined && rand(row, col, lane + 31) > 0.62) {
+              links.push([fromIndex, diagonal, rand(row, col, lane + 37)]);
+            }
+            const lowerLeft = indexByGrid.get(`${row + 1},${col - 1}`);
+            if (lowerLeft !== undefined && rand(row, col, lane + 43) > 0.68) {
+              links.push([fromIndex, lowerLeft, rand(row, col, lane + 47)]);
+            }
+          }
+
+          const wormLine = [...indexByGrid.values()]
+            .map((cellIndex) => {
+              const cell = cells[cellIndex];
+              const order = (cell.row * glyph[0].length + cell.col + rand(cell.row, cell.col, 251) * 0.42) / 34;
+              return { cellIndex, order };
+            })
+            .sort((a, b) => a.order - b.order);
+
+          for (let i = 1; i < wormLine.length; i += 1) {
+            links.push([wormLine[i - 1].cellIndex, wormLine[i].cellIndex, rand(i, lane, 503), "spine"]);
+          }
+        }
+
+        for (let i = 0; i < cells.length; i += 1) {
+          for (let j = i + 1; j < cells.length; j += 1) {
+            const a = cells[i];
+            const b = cells[j];
+            if (a.lane === b.lane) continue;
+            if (Math.abs(a.lane - b.lane) > 1) continue;
+
+            const distance = Math.hypot(a.x - b.x, a.y - b.y);
+            const linkRange = cellStep * 2.25;
+            if (distance < linkRange && rand(i, j, 71) > 0.28) {
+              links.push([i, j, rand(i, j, 73)]);
+            }
+          }
+        }
+
+        for (let i = 0; i < links.length; i += 1) {
+          const seed = links[i][2];
+          const a = cells[links[i][0]];
+          const b = cells[links[i][1]];
+          const distance = Math.hypot(a.x - b.x, a.y - b.y);
+          if (seed < 0.64 || distance < cellStep * 1.2) continue;
+          swimmers.push({
+            linkIndex: i,
+            seed,
+            offset: rand(i, seed, 91),
+            speed: 0.055 + rand(i, seed, 93) * 0.04,
+            reverse: seed > 0.78,
+          });
+        }
+      }
+
+      function buildDebris() {
+        debris = Array.from({ length: 140 }, (_, i) => ({
+          x: rand(i, 2, 101) * viewW,
+          y: rand(i, 3, 103) * viewH,
+          radius: 0.35 + rand(i, 4, 107) * 1.4,
+          seed: rand(i, 5, 109),
+          alpha: 0.08 + rand(i, 6, 113) * 0.15,
+        }));
+      }
+
+      function smoothstep(edge0, edge1, value) {
+        const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+        return t * t * (3 - 2 * t);
+      }
+
+      function linearstep(edge0, edge1, value) {
+        return clamp((value - edge0) / (edge1 - edge0), 0, 1);
+      }
+
+      function loopDrift(time) {
+        const loopIndex = Math.floor(time / 32);
+        const nextLoop = loopIndex + 1;
+        const mix = smoothstep(0.78, 1, (time % 32) / 32);
+
+        return {
+          phase: (rand(loopIndex, 1, 401) - 0.5) * 0.18 * (1 - mix) + (rand(nextLoop, 1, 401) - 0.5) * 0.18 * mix,
+          curve: (rand(loopIndex, 2, 403) - 0.5) * 0.65 * (1 - mix) + (rand(nextLoop, 2, 403) - 0.5) * 0.65 * mix,
+        };
+      }
+
+      function storyboardState(time) {
+        const drift = loopDrift(time);
+        const phase = (time % 36) / 36;
+        const arrive = smoothstep(0.04, 0.3, phase);
+        const exit = smoothstep(0.86, 0.98, phase);
+        const whirlIn = smoothstep(0.24, 0.34, phase) * (1 - smoothstep(0.5, 0.62, phase));
+        const reverseWhirl = smoothstep(0.72, 0.8, phase) * (1 - smoothstep(0.86, 0.96, phase));
+        const whirl = Math.max(whirlIn, reverseWhirl);
+        const formIn = smoothstep(0.36, 0.62, phase);
+        const formOut = 1 - smoothstep(0.72, 0.82, phase);
+        const form = formIn * formOut;
+        const connect = smoothstep(0.12, 0.34, phase) * (1 - smoothstep(0.86, 0.98, phase));
+        const rotate = Math.sin(phase * Math.PI) * 0.08 + Math.sin(time * 0.1) * 0.035;
+        const centerX = viewW * 0.5 + Math.sin(time * 0.045 + drift.phase) * viewW * 0.035;
+        const centerY = viewH * 0.5 + Math.cos(time * 0.04 - drift.phase * 0.7) * viewH * 0.028;
+        const entryProgress = -0.12 + (0.52 + 0.12) * arrive;
+        const pathProgress = entryProgress + (1.18 - entryProgress) * exit;
+
+        return {
+          phase,
+          arrive,
+          exit,
+          whirl,
+          reverseWhirl,
+          connect,
+          form,
+          rotate,
+          drift,
+          centerX,
+          centerY,
+          pathProgress,
+        };
+      }
+
+      function crawlPathPoint(progress, time) {
+        const waypoints = [0.1, -0.08, 0.07, -0.1, 0.05, -0.03];
+        const scaled = clamp(progress, 0, 1) * (waypoints.length - 1);
+        const index = Math.min(waypoints.length - 2, Math.floor(scaled));
+        const localT = smoothstep(0, 1, scaled - index);
+        const lane = waypoints[index] + (waypoints[index + 1] - waypoints[index]) * localT;
+        const stepPulse = Math.sin(progress * TAU * 5.4 - time * 2.8) * viewH * 0.01;
+
+        return {
+          x: -viewW * 0.52 + progress * viewW * 2.04,
+          y:
+            viewH * 0.52 +
+            lane * viewH +
+            stepPulse,
+        };
+      }
+
+      function crawlPathFrame(progress, time) {
+        const ahead = crawlPathPoint(progress + 0.01, time);
+        const behind = crawlPathPoint(progress - 0.01, time);
+        const x = ahead.x - behind.x;
+        const y = ahead.y - behind.y;
+        const length = Math.max(1, Math.hypot(x, y));
+
+        return {
+          tangentX: x / length,
+          tangentY: y / length,
+          normalX: -y / length,
+          normalY: x / length,
+        };
+      }
+
+      function rotateLocal(x, y, angle) {
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+
+        return {
+          x: x * cos - y * sin,
+          y: x * sin + y * cos,
+        };
+      }
+
+      function cellState(cell, time) {
+        const story = storyboardState(time);
+        const letter = letters[cell.lane];
+        const letterX = viewW * letter.x;
+        const letterY = viewH * letter.y;
+        const localAX = cell.x - letterX;
+        const localAY = cell.y - letterY;
+        const size = Math.min(viewW, viewH);
+        const bodyOrder = clamp((cell.row * glyphs.A[0].length + cell.col + rand(cell.row, cell.col, 251) * 0.42) / 34, 0, 1);
+        const headBias = smoothstep(0.74, 1, bodyOrder);
+        const tailBias = 1 - smoothstep(0, 0.32, bodyOrder);
+        const distortion = 1 + Math.sin(time * 0.06 + cell.row * 0.9 + cell.col * 0.5) * 0.12;
+        const abstractX = localAX * distortion + Math.sin(cell.row * 1.8 + time * 0.07) * 8;
+        const abstractY = localAY * (1 - Math.sin(time * 0.05 + cell.seed * TAU) * 0.08) + Math.cos(cell.col * 1.5 + time * 0.06) * 7;
+        const letterTarget = rotateLocal(abstractX, abstractY, story.rotate);
+        const group = 0;
+        const followDelay = (1 - bodyOrder) * (0.24 + story.exit * 0.16);
+        const followProgress = story.pathProgress - followDelay * (1 - story.form * 0.72);
+        const pathPoint = crawlPathPoint(followProgress, time);
+        const pathFrame = crawlPathFrame(followProgress, time);
+        const crawlPhase = time * 5.1 - bodyOrder * TAU * 2.35 + cell.seed * TAU;
+        const crawlGate = (1 - story.form * 0.62) * (0.72 + story.arrive * 0.45 + story.exit * 0.38);
+        const lateralWave = Math.sin(crawlPhase) * size * 0.012 * crawlGate;
+        const compressionWave = Math.cos(crawlPhase * 1.12) * size * 0.008 * crawlGate;
+        const sideOffset = (rand(cell.row, cell.col, 257) - 0.5) * size * 0.01 * (1 - story.form * 0.75);
+        const wormX =
+          pathPoint.x +
+          pathFrame.normalX * (lateralWave + sideOffset) +
+          pathFrame.tangentX * compressionWave +
+          headBias * size * (0.022 * (1 - story.form) + 0.052 * story.exit);
+        const wormY =
+          pathPoint.y +
+          pathFrame.normalY * (lateralWave + sideOffset) +
+          pathFrame.tangentY * compressionWave;
+        const whirlDirection = story.reverseWhirl > 0.02 ? -1 : 1;
+        const whirlAngle = time * 2.45 * whirlDirection + bodyOrder * TAU * 1.18;
+        const whirlRadius = size * (0.055 + (1 - bodyOrder) * 0.18);
+        const whirlX = story.centerX + Math.cos(whirlAngle) * whirlRadius + Math.sin(bodyOrder * TAU * 2.4) * size * 0.025;
+        const whirlY = story.centerY + Math.sin(whirlAngle) * whirlRadius * 0.72;
+        const wormBlendX = wormX + (whirlX - wormX) * story.whirl;
+        const wormBlendY = wormY + (whirlY - wormY) * story.whirl;
+        const formedWriggle = story.form * (1 - story.exit);
+        const letterRipple = time * 4.4 - bodyOrder * TAU * 2.7;
+        const letterPush = Math.sin(letterRipple) * size * 0.01 * formedWriggle;
+        const letterLift = Math.cos(letterRipple * 0.9 + cell.pullPhase) * size * 0.012 * formedWriggle;
+        const hurryLean = Math.sin(time * 2.6 + bodyOrder * TAU) * size * 0.005 * formedWriggle;
+        const targetX = story.centerX + letterTarget.x + letterPush + hurryLean;
+        const targetY = story.centerY + letterTarget.y + letterLift;
+        const baseX = wormBlendX + (targetX - wormBlendX) * story.form;
+        const baseY = wormBlendY + (targetY - wormBlendY) * story.form;
+        const slowBreath =
+          Math.sin(time * cell.pulseSpeed * 0.42 + cell.pulsePhase) * 0.04 +
+          Math.sin(time * (cell.pulseSpeed * 0.22) + cell.pulsePhase * 1.7) * 0.025;
+        const micro = Math.sin(time * (cell.pulseSpeed * 0.85) + cell.seed * TAU) * 0.018;
+        const pressure = 0;
+        const breath = pressure * 2 - 1 + slowBreath;
+        const wobbleAmount = cell.edge ? 1.25 : 0.9;
+        const swelling = Math.max(0.7, 1 + slowBreath + micro + headBias * 0.12 * (1 - story.form * 0.45) - tailBias * 0.08);
+        const limbWobble = wobbleAmount * (0.22 + story.form * 0.62);
+        const wormScale = 0.68 + story.form * 0.32 + headBias * 0.05 * (1 - story.form);
+
+        return {
+          x: baseX + Math.sin(time * (0.52 + cell.seed * 0.16) + cell.wobblePhase) * limbWobble,
+          y: baseY + Math.cos(time * (0.48 + cell.seed * 0.14) + cell.wobblePhase * 1.3) * limbWobble,
+          radius: cell.baseRadius * swelling * wormScale,
+          breath,
+          connect: story.connect,
+          form: story.form,
+          group,
+          pressure,
+        };
+      }
+
+      function drawBackground(time) {
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, viewW, viewH);
+
+        for (const particle of debris) {
+          const x = particle.x + Math.sin(time * 0.08 + particle.seed * TAU) * 1.6;
+          const y = particle.y + Math.cos(time * 0.07 + particle.seed * TAU) * 1.2;
+          ctx.fillStyle = `rgba(222, 238, 230, ${particle.alpha * 0.5})`;
+          ctx.beginPath();
+          ctx.arc(x, y, particle.radius, 0, TAU);
+          ctx.fill();
+        }
+
+        drawRegistrationMarks();
+      }
+
+      function drawRegistrationMarks() {
+        const inset = Math.min(viewW, viewH) * 0.058;
+        const size = Math.min(viewW, viewH) * 0.013;
+        const marks = [
+          [inset, inset],
+          [viewW - inset, inset],
+          [inset, viewH - inset],
+          [viewW - inset, viewH - inset],
+          [viewW * 0.5, inset],
+          [viewW * 0.5, viewH - inset],
+        ];
+
+        ctx.save();
+        ctx.strokeStyle = "rgba(235, 244, 238, 0.66)";
+        ctx.lineWidth = 1;
+        for (const [x, y] of marks) {
+          ctx.beginPath();
+          ctx.moveTo(x - size, y);
+          ctx.lineTo(x + size, y);
+          ctx.moveTo(x, y - size);
+          ctx.lineTo(x, y + size);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function drawMembranes(time) {
+        ctx.save();
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        ctx.globalCompositeOperation = "source-over";
+
+        const story = storyboardState(time);
+
+        for (const [fromIndex, toIndex, seed, type] of links) {
+          if (type === "spine" && story.form > 0.54) continue;
+          const a = cells[fromIndex];
+          const b = cells[toIndex];
+          const stateA = cellState(a, time);
+          const stateB = cellState(b, time);
+          const pulse = 0.5 + Math.sin(time * (0.35 + seed * 0.4) + seed * TAU) * 0.5;
+
+          const linkPressure = Math.max(stateA.pressure, stateB.pressure);
+          ctx.strokeStyle = linkPressure > 0.22 ? palette.membraneWarm : palette.membrane;
+          const spineFade = type === "spine" ? 1 - smoothstep(0.32, 0.54, story.form) : 1;
+          ctx.globalAlpha = (0.52 + pulse * 0.2 + linkPressure * 0.08) * spineFade;
+          ctx.lineWidth = Math.min(stateA.radius, stateB.radius) * (3.2 + pulse * 0.85 + linkPressure * 1.7) * (type === "spine" ? 0.88 : 1);
+          ctx.beginPath();
+          ctx.moveTo(stateA.x, stateA.y);
+          ctx.quadraticCurveTo(
+            (stateA.x + stateB.x) / 2 + Math.sin(time * 0.35 + seed * TAU) * 0.9,
+            (stateA.y + stateB.y) / 2 + Math.cos(time * 0.31 + seed * TAU) * 0.9,
+            stateB.x,
+            stateB.y
+          );
+          ctx.stroke();
+
+          if (type !== "spine" && (linkPressure > 0.18 || seed > 0.68)) {
+            ctx.globalAlpha = 0.3 + linkPressure * 0.2;
+            ctx.strokeStyle = linkPressure > 0.28 ? "rgba(172, 23, 162, 0.48)" : "rgba(246, 24, 219, 0.34)";
+            ctx.lineWidth = Math.min(stateA.radius, stateB.radius) * (5.2 + linkPressure * 1.9);
+            ctx.beginPath();
+            ctx.moveTo(stateA.x, stateA.y);
+            ctx.lineTo(stateB.x, stateB.y);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+
+      function drawLiquidFlow(time) {
+        ctx.save();
+        ctx.globalCompositeOperation = "source-over";
+
+        const story = storyboardState(time);
+
+        for (const [fromIndex, toIndex, seed, type] of links) {
+          if (type === "spine" && story.form > 0.54) continue;
+          if (seed < 0.32) continue;
+
+          const a = cells[fromIndex];
+          const b = cells[toIndex];
+          const stateA = cellState(a, time);
+          const stateB = cellState(b, time);
+          const linkPressure = Math.max(stateA.pressure, stateB.pressure);
+          const flow = (time * (0.11 + seed * 0.13) + seed) % 1;
+          const easeFlow = 0.5 - Math.cos(flow * TAU) * 0.5;
+          const x = stateA.x + (stateB.x - stateA.x) * easeFlow;
+          const y = stateA.y + (stateB.y - stateA.y) * easeFlow;
+          const radius = Math.min(stateA.radius, stateB.radius) * (0.82 + linkPressure * 0.55);
+          const color = linkPressure > 0.3 ? "rgba(153, 24, 152, 0.24)" : "rgba(255, 44, 221, 0.22)";
+
+          drawBlob(x, y, radius, color, seed + 0.44, time, 1);
+
+          if (linkPressure > 0.22) {
+            const backX = stateA.x + (stateB.x - stateA.x) * Math.max(0, easeFlow - 0.22);
+            const backY = stateA.y + (stateB.y - stateA.y) * Math.max(0, easeFlow - 0.22);
+            drawBlob(backX, backY, radius * 0.72, "rgba(255, 47, 221, 0.18)", seed + 0.62, time, 1);
+          }
+        }
+
+        ctx.restore();
+      }
+
+      function drawBlob(x, y, radius, color, seed, time, alpha = 1) {
+        const points = 15;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+
+        for (let i = 0; i <= points; i += 1) {
+          const angle = (i / points) * TAU;
+          const distortion =
+            1 +
+            Math.sin(angle * 1.7 + seed * TAU + time * 0.34) * 0.14 +
+            Math.cos(angle * 3.1 - seed * TAU + time * 0.22) * 0.1 +
+            Math.sin(angle * 5.2 + seed * 3.0) * 0.045;
+          const px = x + Math.cos(angle) * radius * distortion;
+          const py = y + Math.sin(angle) * radius * distortion * (0.93 + seed * 0.1);
+
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+
+      function drawOutlineBlob(x, y, radius, fillColor, strokeColor, seed, time, pressure, alpha = 1) {
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = fillColor;
+        ctx.strokeStyle = strokeColor;
+        ctx.lineWidth = Math.max(0.55, radius * (0.035 + pressure * 0.014));
+        ctx.lineJoin = "round";
+
+        const points = 15;
+        ctx.beginPath();
+        for (let i = 0; i <= points; i += 1) {
+          const angle = (i / points) * TAU;
+          const distortion =
+            1 +
+            Math.sin(angle * 1.7 + seed * TAU + time * 0.34) * (0.12 + pressure * 0.12) +
+            Math.cos(angle * 3.1 - seed * TAU + time * 0.22) * 0.1 +
+            Math.sin(angle * 5.2 + seed * 3.0) * 0.045;
+          const px = x + Math.cos(angle) * radius * distortion;
+          const py = y + Math.sin(angle) * radius * distortion * (0.93 + seed * 0.1);
+
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawCells(time) {
+        ctx.globalCompositeOperation = "source-over";
+        for (const cell of cells) {
+          const state = cellState(cell, time);
+          const stroke = state.pressure > 0.34 ? "rgba(180, 28, 172, 0.32)" : "rgba(255, 92, 232, 0.34)";
+          const fill = state.pressure > 0.34 ? "rgba(124, 18, 122, 0.22)" : "rgba(235, 40, 205, 0.22)";
+          drawBlob(state.x, state.y, state.radius * (1.55 + state.pressure * 0.12), fill, cell.seed + 0.29, time, 1);
+          drawOutlineBlob(state.x, state.y, state.radius * (1.05 + state.pressure * 0.05), "rgba(0, 0, 0, 0)", stroke, cell.seed, time, state.pressure, 1);
+        }
+      }
+
+      function drawContactShadow(time) {
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minY = Infinity;
+        let maxY = -Infinity;
+        let visible = 0;
+
+        for (const cell of cells) {
+          const state = cellState(cell, time);
+          if (state.x < -state.radius || state.x > viewW + state.radius) continue;
+
+          minX = Math.min(minX, state.x - state.radius);
+          maxX = Math.max(maxX, state.x + state.radius);
+          minY = Math.min(minY, state.y - state.radius);
+          maxY = Math.max(maxY, state.y + state.radius);
+          visible += 1;
+        }
+
+        if (!visible) return;
+
+        const width = Math.max(40, maxX - minX);
+        const height = Math.max(16, maxY - minY);
+        const x = (minX + maxX) * 0.5;
+        const y = maxY + height * 0.08;
+
+        ctx.save();
+        ctx.globalCompositeOperation = "source-over";
+        ctx.filter = "blur(14px)";
+        ctx.globalAlpha = 0.24;
+        ctx.fillStyle = "rgba(33, 42, 40, 0.72)";
+        ctx.beginPath();
+        ctx.ellipse(x, y, width * 0.42, height * 0.15, 0, 0, TAU);
+        ctx.fill();
+        ctx.filter = "none";
+        ctx.globalAlpha = 0.13;
+        ctx.strokeStyle = "rgba(119, 166, 151, 0.28)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.ellipse(x, y + height * 0.02, width * 0.44, height * 0.17, 0, 0, TAU);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      function drawLiquidSurface(time) {
+        const scaleX = fieldW / viewW;
+        const scaleY = fieldH / viewH;
+
+        liquidCtx.clearRect(0, 0, fieldW, fieldH);
+        liquidCtx.globalCompositeOperation = "lighter";
+
+        drawContactShadow(time);
+        drawCrawlBodyConnections(time, scaleX, scaleY);
+
+        for (const cell of cells) {
+          const state = cellState(cell, time);
+          const x = state.x * scaleX;
+          const y = state.y * scaleY;
+          const radius = state.radius * scaleX * (2.05 + state.connect * 0.22 + state.pressure * 0.44);
+          const gradient = liquidCtx.createRadialGradient(x, y, radius * 0.12, x, y, radius);
+
+          gradient.addColorStop(0, "rgba(248, 221, 128, 0.78)");
+          gradient.addColorStop(0.42, "rgba(207, 159, 72, 0.54)");
+          gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+          liquidCtx.globalAlpha = 1;
+          liquidCtx.fillStyle = gradient;
+          liquidCtx.beginPath();
+          liquidCtx.arc(x, y, radius, 0, TAU);
+          liquidCtx.fill();
+        }
+
+        const image = liquidCtx.getImageData(0, 0, fieldW, fieldH);
+        const data = image.data;
+
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const intensity = Math.max(r, g, b);
+          const body = smoothstep(26, 112, intensity);
+          const edge = smoothstep(18, 76, intensity) - smoothstep(116, 190, intensity);
+
+          if (body <= 0.01 && edge <= 0.01) {
+            data[i + 3] = 0;
+            continue;
+          }
+
+          const pressureMix = clamp((r + g - b * 0.42) / 340, 0, 1);
+          const bodyR = 203;
+          const bodyG = 156;
+          const bodyB = 75;
+          const edgeR = 244;
+          const edgeG = 211;
+          const edgeB = 116;
+          const membraneR = 229;
+          const membraneG = 181;
+          const membraneB = 82;
+          const coreR = 128;
+          const coreG = 86;
+          const coreB = 46;
+          const edgeAmount = edge * 0.95;
+          const membraneAmount = clamp(pressureMix * (0.54 + edge * 0.34), 0, 1);
+          const coreAmount = clamp(body * (1 - edge * 0.92) * (1 - pressureMix * 0.35) * 0.42, 0, 0.48);
+
+          let rOut = bodyR + (edgeR - bodyR) * edgeAmount;
+          let gOut = bodyG + (edgeG - bodyG) * edgeAmount;
+          let bOut = bodyB + (edgeB - bodyB) * edgeAmount;
+
+          rOut = rOut * (1 - membraneAmount) + membraneR * membraneAmount;
+          gOut = gOut * (1 - membraneAmount) + membraneG * membraneAmount;
+          bOut = bOut * (1 - membraneAmount) + membraneB * membraneAmount;
+          rOut = rOut * (1 - coreAmount) + coreR * coreAmount;
+          gOut = gOut * (1 - coreAmount) + coreG * coreAmount;
+          bOut = bOut * (1 - coreAmount) + coreB * coreAmount;
+
+          data[i] = clamp(rOut, 0, 255);
+          data[i + 1] = clamp(gOut, 0, 255);
+          data[i + 2] = clamp(bOut, 0, 255);
+          data[i + 3] = clamp(body * 204 + edge * 122, 0, 226);
+        }
+
+        liquidCtx.putImageData(image, 0, 0);
+        ctx.save();
+        ctx.imageSmoothingEnabled = true;
+        ctx.globalCompositeOperation = "source-over";
+        ctx.drawImage(liquidCanvas, 0, 0, viewW, viewH);
+        drawInternalOrgans(time);
+        ctx.restore();
+      }
+
+      function drawInternalOrgans(time) {
+        ctx.save();
+        ctx.globalCompositeOperation = "source-over";
+
+        for (const cell of cells) {
+          if (rand(cell.row, cell.col, 811) < 0.38) continue;
+
+          const state = cellState(cell, time);
+          if (state.x < -state.radius || state.x > viewW + state.radius) continue;
+
+          const organPhase = time * (0.58 + cell.seed * 0.28) + cell.pullPhase;
+          const offsetX = Math.cos(organPhase) * state.radius * 0.22;
+          const offsetY = Math.sin(organPhase * 0.9) * state.radius * 0.16;
+          const radius = state.radius * (0.28 + rand(cell.col, cell.row, 823) * 0.12);
+          const x = state.x + offsetX;
+          const y = state.y + offsetY;
+          const gradient = ctx.createRadialGradient(x - radius * 0.18, y - radius * 0.18, radius * 0.12, x, y, radius);
+
+          gradient.addColorStop(0, "rgba(255, 236, 151, 0.36)");
+          gradient.addColorStop(0.5, "rgba(147, 87, 45, 0.22)");
+          gradient.addColorStop(1, "rgba(74, 39, 24, 0)");
+          ctx.fillStyle = gradient;
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, TAU);
+          ctx.fill();
+
+          ctx.strokeStyle = "rgba(90, 52, 29, 0.12)";
+          ctx.lineWidth = Math.max(0.5, radius * 0.08);
+          ctx.beginPath();
+          ctx.arc(x, y, radius * 0.9, 0, TAU);
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      }
+
+      function drawCrawlBodyConnections(time, scaleX, scaleY) {
+        const story = storyboardState(time);
+        const loosen = Math.max(
+          smoothstep(0.08, 0.9, story.whirl),
+          smoothstep(0.2, 0.82, story.form) * (1 - story.exit)
+        );
+        const alpha = 1 - loosen;
+
+        if (alpha <= 0.02) return;
+
+        for (const [fromIndex, toIndex, seed, type] of links) {
+          if (type !== "spine") continue;
+
+          const a = cellState(cells[fromIndex], time);
+          const b = cellState(cells[toIndex], time);
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const distance = Math.hypot(dx, dy);
+          const steps = clamp(Math.ceil(distance / Math.max(8, Math.min(a.radius, b.radius) * 0.78)), 2, 8);
+
+          for (let i = 1; i < steps; i += 1) {
+            const t = i / steps;
+            const pulse = 0.92 + Math.sin(time * 3.2 + seed * TAU + t * TAU) * 0.06;
+            const x = (a.x + dx * t) * scaleX;
+            const y = (a.y + dy * t) * scaleY;
+            const radius = Math.min(a.radius, b.radius) * scaleX * (1.82 + alpha * 0.2) * pulse;
+            const gradient = liquidCtx.createRadialGradient(x, y, radius * 0.18, x, y, radius);
+
+            gradient.addColorStop(0, `rgba(244, 211, 121, ${0.56 * alpha})`);
+            gradient.addColorStop(0.5, `rgba(198, 145, 66, ${0.26 * alpha})`);
+            gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+            liquidCtx.globalAlpha = 1;
+            liquidCtx.fillStyle = gradient;
+            liquidCtx.beginPath();
+            liquidCtx.arc(x, y, radius, 0, TAU);
+            liquidCtx.fill();
+          }
+        }
+      }
+
+      function drawFrame(now) {
+        if (now - lastFrame < 1000 / 60) {
+          requestAnimationFrame(drawFrame);
+          return;
+        }
+        lastFrame = now;
+
+        if (!animationStart) animationStart = now;
+        const time = (now - animationStart) / 1000;
+        drawBackground(time);
+        drawLiquidSurface(time);
+
+        requestAnimationFrame(drawFrame);
+      }
+
+      window.addEventListener("resize", resize);
+      resize();
+      requestAnimationFrame(drawFrame);
+    </script>
+  </body>
+</html>

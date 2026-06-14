@@ -1,0 +1,760 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bacteria_BaseCodeA_2_Texture</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        background: #f8f8f8;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+      }
+
+      canvas {
+        display: block;
+        width: min(100vw, 100vh);
+        height: min(100vw, 100vh);
+      }
+    </style>
+  </head>
+  <body>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+    <script>
+      //Bacteria_BaseCodeA_2_Texture_레기나
+
+      let simW = 160;
+      let simH = 160;
+
+      let grid = [];
+      let next = [];
+
+      let dA = 1.0;
+      let dB = 0.45;
+      let feed = 0.055;
+      let kill = 0.064;
+      let loopFrames = 660;
+      let backgroundDrops = [];
+
+      function setup() {
+        createCanvas(400, 400);
+        pixelDensity(1);
+
+        initGrid();
+        initBackgroundDrops();
+        seedRandomColonies();
+      }
+
+      function draw() {
+        background(0);
+
+        let phase = (frameCount % loopFrames) / loopFrames;
+        let formA = livingAFormation(phase);
+        let dissolve = livingADissolve(phase);
+        let burst = suddenMiddleBurst(phase);
+        let fastForward = crazyFastForward(phase);
+        let simSteps = 1 + floor(fastForward * 44);
+
+        for (let i = 0; i < simSteps; i++) {
+          updateReaction();
+        }
+
+        thinLiquid(0.0017 + burst * 0.0013 + fastForward * 0.014 + dissolve * 0.001);
+        animateBackgroundDrops(phase, formA * (1 - formA * 0.42), burst + fastForward * 3.2);
+        keepCenterAlive(phase, formA * (1 - formA * 0.56), burst * (1 - formA * 0.28) + fastForward * 2.35);
+        exchangeOilDroplets(phase, formA + fastForward * 1.28, burst + fastForward * 4.35);
+        livingAColony(formA, dissolve, phase);
+
+        if (frameCount > 70) {
+          guideLiquidIntoA(formA * (0.5 + fastForward * 3.55));
+        }
+
+        quietNonLetterClumps(formA, dissolve);
+
+        // when A dissolves, regenerate the colony from surrounding living matter
+        if ((dissolve > 0.2 || formA < 0.16) && frameCount % 10 === 0) {
+          seedSmallRandomColony();
+        }
+
+        if (frameCount % 210 === 0) {
+          breakOuterFungi();
+        }
+
+        drawResult();
+        drawFrame();
+      }
+
+      function initGrid() {
+        grid = [];
+        next = [];
+
+        for (let x = 0; x < simW; x++) {
+          grid[x] = [];
+          next[x] = [];
+
+          for (let y = 0; y < simH; y++) {
+            grid[x][y] = { a: 1, b: 0 };
+            next[x][y] = { a: 1, b: 0 };
+          }
+        }
+      }
+
+      function seedRandomColonies() {
+        for (let i = 0; i < 78; i++) {
+          let x = floor(random(18, simW - 18));
+          let y = floor(random(18, simH - 18));
+          let r = floor(random(3, 6));
+
+          addSoftCircle(x, y, r, 0.9);
+        }
+      }
+
+      function seedSmallRandomColony() {
+        let a = random(TWO_PI);
+        let r = sqrt(random()) * 65;
+
+        let x = floor(simW / 2 + cos(a) * r);
+        let y = floor(simH / 2 + sin(a) * r);
+
+        addSoftCircle(x, y, floor(random(2, 4)), 0.25);
+      }
+
+      function initBackgroundDrops() {
+        backgroundDrops = [];
+
+        for (let i = 0; i < 54; i++) {
+          let a = random(TWO_PI);
+          let r = sqrt(random()) * 76;
+
+          backgroundDrops.push({
+            x: simW / 2 + cos(a) * r,
+            y: simH / 2 + sin(a) * r,
+            radius: random(2.6, 4.8),
+            angle: random(TWO_PI),
+            seed: random(1000),
+            active: random() > 0.42,
+          });
+        }
+      }
+
+      function guideLiquidIntoA(amount) {
+        let strength = 0.027 * amount;
+        let a = livingAGeometry();
+
+        for (const stroke of a.strokes) {
+          guideDottedLine(stroke[0], stroke[1], stroke[2], stroke[3], stroke[4], strength * stroke[5]);
+        }
+      }
+
+      function livingAColony(formA, dissolve, phase) {
+        if (formA > 0.04) {
+          let strength = 0.018 * formA;
+          let a = livingAGeometry();
+          let wobble = sin(frameCount * 0.04) * 2.2;
+
+          addSoftCircle(a.cx + floor(wobble), a.cy - 30, 4, strength);
+          addSoftCircle(a.cx - 6 - floor(wobble * 0.6), a.cy - 7, 4, strength * 0.75);
+          addSoftCircle(a.cx + 8 + floor(wobble * 0.6), a.cy - 5, 4, strength * 0.75);
+          addSoftCircle(a.cx + 2, a.cy + 16, 3, strength * 0.7);
+        }
+
+        if (dissolve > 0.05) {
+          fragmentA(0.028 * dissolve, phase);
+        }
+      }
+
+      function fragmentA(amount, phase) {
+        let anchors = livingAGeometry().strokes;
+
+        for (let i = 0; i < anchors.length; i++) {
+          let line = anchors[i];
+          let steps = 8;
+
+          for (let j = 0; j < steps; j++) {
+            let t = (j + 0.5) / steps;
+            let x = lerp(line[0], line[2], t);
+            let y = lerp(line[1], line[3], t);
+            let a = phase * TWO_PI * 2 + i * 1.7 + j * 0.9;
+            let scatter = 5 + dissolvePulse(phase) * 16;
+            let px = floor(x + cos(a) * scatter);
+            let py = floor(y + sin(a) * scatter);
+
+            weakenCircle(floor(x), floor(y), 3, amount * 0.65);
+            addSoftCircle(px, py, 2, amount * 0.72);
+          }
+        }
+      }
+
+      function livingAGeometry() {
+        let phase = (frameCount % loopFrames) / loopFrames;
+        let loopIndex = floor(frameCount / loopFrames);
+        let spotX = sin(loopIndex * 2.31 + 0.6) * 7.0 + sin(loopIndex * 4.17) * 2.8;
+        let spotY = cos(loopIndex * 1.91 + 1.1) * 5.6 + sin(loopIndex * 3.43) * 2.2;
+        let livingWobble = smoothstep(0.24, 0.46, phase) - smoothstep(0.76, 0.94, phase);
+        let driftX = spotX + sin(frameCount * 0.017 + loopIndex) * 1.7 * livingWobble;
+        let driftY = spotY + cos(frameCount * 0.014 + loopIndex * 1.4) * 1.4 * livingWobble;
+        let cx = 72 + driftX;
+        let cy = 95 + driftY;
+        let lean = sin(frameCount * 0.012) * 2.2;
+        let breathe = sin(frameCount * 0.018) * 1.8;
+        let ox = -8 + driftX;
+        let oy = 4 + driftY;
+
+        return {
+          cx,
+          cy,
+          strokes: [
+            [43 + ox + lean, 139 + oy, 80 + ox + breathe, 27 + oy, 4, 1.08],
+            [119 + ox + lean, 137 + oy, 80 + ox + breathe, 27 + oy, 4, 1.08],
+            [58 + ox + lean * 0.4, 91 + oy + breathe * 0.3, 105 + ox + lean * 0.25, 87 + oy - breathe * 0.2, 3, 0.92],
+          ],
+        };
+      }
+
+      function quietNonLetterClumps(formA, dissolve) {
+        let pressure = constrain(formA * (1 - dissolve * 0.72), 0, 1);
+
+        if (pressure < 0.08) {
+          return;
+        }
+
+        let a = livingAGeometry();
+        let radius = 76;
+        let minX = max(1, floor(a.cx - radius));
+        let maxX = min(simW - 2, floor(a.cx + radius));
+        let minY = max(1, floor(a.cy - radius));
+        let maxY = min(simH - 2, floor(a.cy + radius));
+
+        for (let x = minX; x <= maxX; x++) {
+          for (let y = minY; y <= maxY; y++) {
+            let centerDistance = dist(x, y, a.cx, a.cy);
+
+            if (centerDistance > radius) {
+              continue;
+            }
+
+            let letterDistance = distanceToAStrokes(x, y, a.strokes);
+            let protectLetter = 1 - smoothstep(5.0, 13.5, letterDistance);
+            let quietZone = (1 - protectLetter) * (1 - smoothstep(58, radius, centerDistance));
+            let crowded = smoothstep(0.1, 0.3, grid[x][y].b);
+            let patch = 0.28 + fastGrain(x * 2.7 + frameCount * 0.04, y * 2.3, frameCount) * 0.72;
+            let ripple = 0.65 + sin(x * 0.19 + y * 0.11 + frameCount * 0.035) * 0.35;
+            let fade = 0.064 * pressure * quietZone * crowded * patch * ripple;
+
+            grid[x][y].b = constrain(grid[x][y].b - fade, 0, 1);
+            grid[x][y].a = constrain(grid[x][y].a + fade * 0.5, 0, 1);
+          }
+        }
+      }
+
+      function distanceToAStrokes(x, y, strokes) {
+        let nearest = 999;
+
+        for (const stroke of strokes) {
+          nearest = min(nearest, distanceToSegment(x, y, stroke[0], stroke[1], stroke[2], stroke[3]) - stroke[4]);
+        }
+
+        return nearest;
+      }
+
+      function distanceToSegment(px, py, x1, y1, x2, y2) {
+        let vx = x2 - x1;
+        let vy = y2 - y1;
+        let wx = px - x1;
+        let wy = py - y1;
+        let lenSq = vx * vx + vy * vy;
+        let t = lenSq === 0 ? 0 : constrain((wx * vx + wy * vy) / lenSq, 0, 1);
+        let x = x1 + vx * t;
+        let y = y1 + vy * t;
+
+        return dist(px, py, x, y);
+      }
+
+      function breakOuterFungi() {
+        for (let i = 0; i < 14; i++) {
+          let a = random(TWO_PI);
+          let r = random(55, 78);
+
+          let x = floor(simW / 2 + cos(a) * r);
+          let y = floor(simH / 2 + sin(a) * r);
+
+          weakenCircle(x, y, floor(random(4, 8)), 0.13);
+        }
+
+        for (let i = 0; i < 6; i++) {
+          seedSmallRandomColony();
+        }
+      }
+
+      function exchangeOilDroplets(phase, transfer, burst) {
+        let pairs = [
+          [42, 118, 80, 42, 0.00],
+          [118, 118, 80, 42, 0.21],
+          [50, 88, 110, 88, 0.43],
+          [38, 64, 122, 116, 0.62],
+          [122, 64, 38, 116, 0.79],
+        ];
+
+        let amount = 0.024 + burst * 0.032;
+
+        for (let i = 0; i < pairs.length; i++) {
+          let p = pairs[i];
+          let snap = snapWindow(phase, p[4]);
+          let travel = suddenTransferTravel(phase, p[4]);
+          let x = lerp(p[0], p[2], travel);
+          let y = lerp(p[1], p[3], travel);
+          let angle = atan2(p[3] - p[1], p[2] - p[0]);
+          let wobble = sin(frameCount * 0.035 + i * 2.1) * (1.4 + burst * 2.4 + snap * 7.0);
+          let px = floor(x + cos(angle + HALF_PI) * wobble);
+          let py = floor(y + sin(angle + HALF_PI) * wobble);
+          let radius = floor(2.8 + transfer * 1.1 + burst * 1.1 + snap * 1.4 + sin(frameCount * 0.035 + i) * 0.7);
+
+          guideLine(p[0], p[1], p[2], p[3], 1, amount * 0.045);
+          addSoftCircle(px, py, radius, amount + snap * 0.035);
+
+          if (snap > 0.05) {
+            addSoftEllipse(
+              px - cos(angle) * snap * 7,
+              py - sin(angle) * snap * 7,
+              3.8 + snap * 9.0,
+              1.2 + snap * 0.8,
+              angle,
+              amount * snap * 1.45
+            );
+          }
+
+          if (burst > 0.25 || snap > 0.2) {
+            let split = sin(travel * PI);
+            let ox = cos(angle + HALF_PI) * (3 + split * 5 + snap * 4);
+            let oy = sin(angle + HALF_PI) * (3 + split * 5 + snap * 4);
+            addSoftCircle(floor(px + ox), floor(py + oy), 2, amount * split + snap * 0.02);
+            addSoftCircle(floor(px - ox), floor(py - oy), 2, amount * split + snap * 0.02);
+          }
+        }
+      }
+
+      function keepCenterAlive(phase, transfer, burst) {
+        let amount = 0.024 + transfer * 0.018 + burst * 0.012;
+
+        for (let i = 0; i < 24; i++) {
+          let seed = i * 37.17;
+          let a = seed + sin(frameCount * 0.012 + i) * 0.8;
+          let r = 8 + (i % 6) * 4.4 + sin(frameCount * 0.017 + seed) * 2.2;
+          let x = floor(simW / 2 + cos(a) * r * 0.72);
+          let y = floor(simH / 2 + sin(a * 1.13) * r);
+          let stretch = smoothstep(0.2, 0.34, wrap01(phase + i * 0.071)) -
+            smoothstep(0.43, 0.7, wrap01(phase + i * 0.071));
+          stretch *= 1 - transfer * 0.7;
+
+          if (stretch > 0.05 && i % 3 === 0) {
+            addSoftEllipse(x, y, 3.6 + stretch * 5.2, 1.8, a, amount);
+          } else {
+            addSoftCircle(x, y, 2, amount);
+          }
+        }
+      }
+
+      function animateBackgroundDrops(phase, transfer, burst) {
+        let a = livingAGeometry();
+
+        for (let i = 0; i < backgroundDrops.length; i++) {
+          let dot = backgroundDrops[i];
+          let pulse = wrap01(phase * 0.72 + dot.seed);
+          let stretch = dot.active ? smoothstep(0.18, 0.33, pulse) - smoothstep(0.43, 0.66, pulse) : 0;
+          let drift = sin(frameCount * 0.018 + dot.seed * TWO_PI) * 1.2;
+          let x = dot.x + cos(dot.angle + HALF_PI) * drift;
+          let y = dot.y + sin(dot.angle + HALF_PI) * drift;
+          let amount = 0.034 + transfer * 0.016 + burst * 0.012;
+          let centerDistance = dist(x, y, a.cx, a.cy);
+          let letterDistance = distanceToAStrokes(x, y, a.strokes);
+          let letterArea = 1 - smoothstep(34, 76, centerDistance);
+          let notLetter = smoothstep(7, 20, letterDistance);
+          let roundBias = transfer * letterArea * notLetter;
+
+          let patch = 0.45 + fastGrain(dot.x * 2.1, dot.y * 2.4, floor(frameCount * 0.35)) * 0.55;
+          amount *= 1 - transfer * 0.6 * letterArea * notLetter * patch;
+          stretch *= 1 - roundBias * 0.82;
+
+          if (stretch > 0.03) {
+            let length = dot.radius * (1.6 + stretch * 3.7);
+            let thickness = dot.radius * (0.82 - stretch * 0.28 + roundBias * 0.18);
+            addSoftEllipse(x, y, length, thickness, dot.angle, amount);
+          } else {
+            addSoftCircle(floor(x), floor(y), floor(dot.radius + roundBias * 1.1), amount * 1.2);
+          }
+        }
+      }
+
+      function thinLiquid(amount) {
+        for (let x = 1; x < simW - 1; x++) {
+          for (let y = 1; y < simH - 1; y++) {
+            let dx = x - simW / 2;
+            let dy = y - simH / 2;
+            let outside = constrain((sqrt(dx * dx + dy * dy) - 34) / 42, 0, 1);
+            let local = amount * (0.45 + outside * 0.85);
+
+            grid[x][y].b = constrain(grid[x][y].b - local, 0, 1);
+            grid[x][y].a = constrain(grid[x][y].a + local * 0.65, 0, 1);
+          }
+        }
+      }
+
+      function guideDottedLine(x1, y1, x2, y2, thickness, strength) {
+        let steps = 32;
+        let angle = atan2(y2 - y1, x2 - x1);
+
+        for (let i = 0; i < steps; i++) {
+          let p = i / (steps - 1);
+
+          let wave = sin(p * PI * 2.2 + frameCount * 0.018 + x1 * 0.03) * 2.2;
+          let tremble = sin(p * PI * 7.1 + frameCount * 0.031 + y2 * 0.04) * 0.8;
+          let x = floor(lerp(x1, x2, p) + cos(angle + HALF_PI) * (wave + tremble));
+          let y = floor(lerp(y1, y2, p) + sin(angle + HALF_PI) * (wave + tremble));
+
+          // gap between bacteria colonies
+          if (i % 3 !== 1) {
+            let radius = thickness + (i % 4 === 0 ? 1 : 0);
+            addSoftCircle(x, y, radius, strength * (1.0 + sin(i + frameCount * 0.02) * 0.24));
+          }
+        }
+      }
+
+      function weakenLine(x1, y1, x2, y2, thickness, amount) {
+        let steps = 100;
+
+        for (let i = 0; i < steps; i++) {
+          let p = i / (steps - 1);
+
+          let x = floor(lerp(x1, x2, p));
+          let y = floor(lerp(y1, y2, p));
+
+          weakenCircle(x, y, thickness, amount);
+        }
+      }
+
+      function weakenCircle(cx, cy, r, amount) {
+        cx = floor(cx);
+        cy = floor(cy);
+        r = ceil(r);
+
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dy = -r; dy <= r; dy++) {
+            let x = cx + dx;
+            let y = cy + dy;
+
+            if (x >= 0 && x < simW && y >= 0 && y < simH) {
+              let d = sqrt(dx * dx + dy * dy);
+
+              if (d <= r) {
+                let falloff = 1 - d / r;
+                grid[x][y].b = constrain(grid[x][y].b - amount * falloff, 0, 1);
+                grid[x][y].a = constrain(grid[x][y].a + amount * falloff, 0, 1);
+              }
+            }
+          }
+        }
+      }
+
+      function guideLine(x1, y1, x2, y2, thickness, strength) {
+        let steps = 100;
+
+        for (let i = 0; i < steps; i++) {
+          let p = i / (steps - 1);
+
+          let x = floor(lerp(x1, x2, p));
+          let y = floor(lerp(y1, y2, p));
+
+          addSoftCircle(x, y, thickness, strength);
+        }
+      }
+
+      function addSoftCircle(cx, cy, r, amount) {
+        cx = floor(cx);
+        cy = floor(cy);
+        r = ceil(r);
+
+        for (let dx = -r; dx <= r; dx++) {
+          for (let dy = -r; dy <= r; dy++) {
+            let x = cx + dx;
+            let y = cy + dy;
+
+            if (x >= 0 && x < simW && y >= 0 && y < simH) {
+              let d = sqrt(dx * dx + dy * dy);
+
+              if (d <= r) {
+                let falloff = 1 - d / r;
+                grid[x][y].b = constrain(grid[x][y].b + amount * falloff, 0, 1);
+                grid[x][y].a = constrain(grid[x][y].a - amount * 0.35 * falloff, 0, 1);
+              }
+            }
+          }
+        }
+      }
+
+      function addSoftEllipse(cx, cy, rx, ry, angle, amount) {
+        let bound = ceil(max(rx, ry)) + 1;
+        let ca = cos(angle);
+        let sa = sin(angle);
+
+        for (let dx = -bound; dx <= bound; dx++) {
+          for (let dy = -bound; dy <= bound; dy++) {
+            let x = floor(cx + dx);
+            let y = floor(cy + dy);
+
+            if (x >= 0 && x < simW && y >= 0 && y < simH) {
+              let lx = dx * ca + dy * sa;
+              let ly = -dx * sa + dy * ca;
+              let d = sqrt((lx * lx) / (rx * rx) + (ly * ly) / (ry * ry));
+
+              if (d <= 1) {
+                let falloff = 1 - d;
+                grid[x][y].b = constrain(grid[x][y].b + amount * falloff, 0, 1);
+                grid[x][y].a = constrain(grid[x][y].a - amount * 0.32 * falloff, 0, 1);
+              }
+            }
+          }
+        }
+      }
+
+      function updateReaction() {
+        for (let x = 1; x < simW - 1; x++) {
+          for (let y = 1; y < simH - 1; y++) {
+            let a = grid[x][y].a;
+            let b = grid[x][y].b;
+
+            let reaction = a * b * b;
+
+            let newA =
+              a +
+              dA * laplaceA(x, y) -
+              reaction +
+              feed * (1 - a);
+
+            let newB =
+              b +
+              dB * laplaceB(x, y) +
+              reaction -
+              (kill + feed) * b;
+
+            next[x][y].a = constrain(newA, 0, 1);
+            next[x][y].b = constrain(newB, 0, 1);
+          }
+        }
+
+        let temp = grid;
+        grid = next;
+        next = temp;
+      }
+
+      function laplaceA(x, y) {
+        let sum = 0;
+
+        sum += grid[x][y].a * -1;
+        sum += grid[x - 1][y].a * 0.2;
+        sum += grid[x + 1][y].a * 0.2;
+        sum += grid[x][y - 1].a * 0.2;
+        sum += grid[x][y + 1].a * 0.2;
+
+        sum += grid[x - 1][y - 1].a * 0.05;
+        sum += grid[x + 1][y - 1].a * 0.05;
+        sum += grid[x - 1][y + 1].a * 0.05;
+        sum += grid[x + 1][y + 1].a * 0.05;
+
+        return sum;
+      }
+
+      function laplaceB(x, y) {
+        let sum = 0;
+
+        sum += grid[x][y].b * -1;
+        sum += grid[x - 1][y].b * 0.2;
+        sum += grid[x + 1][y].b * 0.2;
+        sum += grid[x][y - 1].b * 0.2;
+        sum += grid[x][y + 1].b * 0.2;
+
+        sum += grid[x - 1][y - 1].b * 0.05;
+        sum += grid[x + 1][y - 1].b * 0.05;
+        sum += grid[x - 1][y + 1].b * 0.05;
+        sum += grid[x + 1][y + 1].b * 0.05;
+
+        return sum;
+      }
+
+      function drawResult() {
+        loadPixels();
+
+        for (let y = 0; y < height; y += 2) {
+          for (let x = 0; x < width; x += 2) {
+            let sx = map(x, 0, width - 1, 0, simW - 1);
+            let sy = map(y, 0, height - 1, 0, simH - 1);
+            let dx = x - width / 2;
+            let dy = y - height / 2;
+            let dist = sqrt(dx * dx + dy * dy);
+            let dishMask = 1 - smoothstep(178, 184, dist);
+
+            let b = sampleB(sx, sy);
+            let bLeft = sampleB(sx - 0.42, sy);
+            let bRight = sampleB(sx + 0.42, sy);
+            let bUp = sampleB(sx, sy - 0.42);
+            let bDown = sampleB(sx, sy + 0.42);
+
+            let gradient = constrain((abs(bRight - bLeft) + abs(bDown - bUp)) * 2.15, 0, 1);
+            let body = smoothstep(0.16, 0.24, b);
+            let meniscus = smoothstep(0.1, 0.17, gradient + b * 0.2) * body;
+            let skin = smoothstep(0.2, 0.32, b) * (1 - smoothstep(0.72, 0.92, b));
+            let pore = smoothstep(0.72, 0.95, fastGrain(x + 19, y - 11, frameCount * 0.3)) * body;
+            let grain = fastGrain(x, y, frameCount) - 0.5;
+            let shimmer = sin(x * 0.055 + y * 0.034 + frameCount * 0.035) * 0.5 + 0.5;
+            let rim = (smoothstep(170, 181, dist) - smoothstep(181, 188, dist)) * 48;
+            let innerGlass = (1 - smoothstep(0, 175, dist)) * 3;
+            let ink = (body * 124 + meniscus * 132 + skin * 10 + pore * 4 + grain * 4 + shimmer * meniscus * 8) * dishMask;
+            let col = constrain(248 - ink, 26, 248);
+            let rimCol = constrain(col - rim + innerGlass, 28, 248);
+
+            setPixelBlock(x, y, rimCol);
+          }
+        }
+
+        updatePixels();
+      }
+
+      function setPixelBlock(x, y, col) {
+        for (let oy = 0; oy < 2; oy++) {
+          for (let ox = 0; ox < 2; ox++) {
+            let px = x + ox;
+            let py = y + oy;
+
+            if (px < width && py < height) {
+              let index = (px + py * width) * 4;
+              pixels[index + 0] = col;
+              pixels[index + 1] = col;
+              pixels[index + 2] = col;
+              pixels[index + 3] = 255;
+            }
+          }
+        }
+      }
+
+      function sampleB(x, y) {
+        x = constrain(x, 0, simW - 1);
+        y = constrain(y, 0, simH - 1);
+
+        let x0 = floor(x);
+        let y0 = floor(y);
+        let x1 = min(x0 + 1, simW - 1);
+        let y1 = min(y0 + 1, simH - 1);
+        let tx = x - x0;
+        let ty = y - y0;
+        let top = lerp(grid[x0][y0].b, grid[x1][y0].b, tx);
+        let bottom = lerp(grid[x0][y1].b, grid[x1][y1].b, tx);
+
+        return lerp(top, bottom, ty);
+      }
+
+      function drawFrame() {
+        noFill();
+        stroke(42, 36);
+        strokeWeight(7);
+        circle(width / 2, height / 2, 365);
+        stroke(0, 120);
+        strokeWeight(1.5);
+        circle(width / 2, height / 2, 365);
+        stroke(255, 120);
+        strokeWeight(2);
+        circle(width / 2 - 1, height / 2 - 1, 358);
+      }
+
+      function smoothstep(edge0, edge1, x) {
+        x = constrain((x - edge0) / (edge1 - edge0), 0, 1);
+        return x * x * (3 - 2 * x);
+      }
+
+      function dropletTransferPulse(phase) {
+        let rise = smoothstep(0.12, 0.28, phase);
+        let fall = smoothstep(0.62, 0.9, phase);
+        return constrain(rise - fall, 0, 1);
+      }
+
+      function livingAFormation(phase) {
+        let arrive = smoothstep(0.27, 0.45, phase);
+        let release = smoothstep(0.84, 0.98, phase);
+        return constrain(arrive - release, 0, 1);
+      }
+
+      function livingADissolve(phase) {
+        let start = smoothstep(0.82, 0.88, phase);
+        let end = smoothstep(0.94, 0.995, phase);
+        return constrain(start - end, 0, 1);
+      }
+
+      function dissolvePulse(phase) {
+        let start = smoothstep(0.84, 0.9, phase);
+        let end = smoothstep(0.94, 0.995, phase);
+        return constrain(start - end, 0, 1);
+      }
+
+      function suddenMiddleBurst(phase) {
+        let inBurst = smoothstep(0.36, 0.385, phase);
+        let outBurst = smoothstep(0.475, 0.56, phase);
+        return constrain(inBurst - outBurst, 0, 1);
+      }
+
+      function crazyFastForward(phase) {
+        let attack = smoothstep(0.372, 0.395, phase);
+        let release = smoothstep(0.49, 0.545, phase);
+        return constrain(attack - release, 0, 1);
+      }
+
+      function suddenTransferTravel(phase, offset) {
+        let x = wrap01(phase + offset);
+
+        if (x < 0.36) {
+          return 0.05 + dropletEase(x / 0.36) * 0.1;
+        }
+
+        if (x < 0.49) {
+          return 0.15 + dropletEase((x - 0.36) / 0.13) * 0.8;
+        }
+
+        return 0.95 - dropletEase((x - 0.49) / 0.51) * 0.9;
+      }
+
+      function snapWindow(phase, offset) {
+        let x = wrap01(phase + offset);
+        let attack = smoothstep(0.365, 0.392, x);
+        let release = smoothstep(0.49, 0.535, x);
+
+        return constrain(attack - release, 0, 1);
+      }
+
+      function dropletEase(x) {
+        let slowFastSlow = x < 0.5
+          ? 4 * x * x * x
+          : 1 - pow(-2 * x + 2, 3) / 2;
+
+        return slowFastSlow;
+      }
+
+      function wrap01(value) {
+        return ((value % 1) + 1) % 1;
+      }
+
+      function fastGrain(x, y, t) {
+        let value = sin(x * 12.9898 + y * 78.233 + floor(t * 0.35) * 4.1414) * 43758.5453;
+        return value - floor(value);
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Alphabet Lab</title>
+
+  <style>
+    body{
+      margin:0;
+      background:#111;
+      color:white;
+      font-family:Arial,sans-serif;
+      padding:28px;
+    }
+
+    h1{
+      margin:0 0 60px;
+      font-size:24px;
+      font-weight:600;
+      letter-spacing:.5px;
+    }
+
+    h2{
+      margin:90px 0 24px;
+      font-size:18px;
+      border-top:1px solid #444;
+      padding-top:28px;
+      font-weight:600;
+    }
+
+    h3{
+      margin:34px 0 16px;
+      font-size:15px;
+      color:#ddd;
+      font-weight:500;
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+      gap:22px;
+    }
+
+    .process{
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      gap:22px;
+      align-items:start;
+    }
+
+    .card{
+      background:#1d1d1d;
+      padding:12px;
+      border-radius:12px;
+      cursor:pointer;
+      border:1px solid #2c2c2c;
+      transition:.15s;
+    }
+
+    .card:hover{
+      background:#2a2a2a;
+      transform:translateY(-2px);
+    }
+
+    .thumb{
+      height:170px;
+      border-radius:10px;
+      background:#2b2b2b;
+      border:1px solid #3b3b3b;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:#777;
+      font-size:34px;
+      font-weight:300;
+    }
+
+    .title{
+      margin-top:10px;
+      font-size:13px;
+      color:#ddd;
+      line-height:1.4;
+    }
+
+    .sub{
+      margin-top:3px;
+      font-size:11px;
+      color:#888;
+    }
+
+    #previewBox{
+      display:none;
+      position:fixed;
+      inset:0;
+      background:rgba(0,0,0,.92);
+      z-index:10;
+      padding:30px;
+    }
+
+    #previewFrame{
+      display:block;
+      width:100%;
+      height:88vh;
+      border:none;
+      background:white;
+      border-radius:14px;
+    }
+
+    #closeBtn{
+      margin-bottom:12px;
+      padding:8px 14px;
+      cursor:pointer;
+      background:#eee;
+      border:none;
+      border-radius:6px;
+      font-size:13px;
+    }
+
+    @media (max-width:900px){
+      .process{
+        grid-template-columns:1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<h1>ALPHABET_LAB 레기나</h1>
+
+<div id="previewBox">
+  <button id="closeBtn" onclick="closePreview()">Close</button>
+  <iframe id="previewFrame"></iframe>
+</div>
+
+<h2>6/2 초기 테스트</h2>
+
+<div class="grid">
+  <div class="card" onclick="openPreview('Bacteria_Testing01.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Bacteria_Testing01</div>
+    <div class="sub">초기 테스트</div>
+  </div>
+</div>
+
+<h2>6/9 지난 주 프로토타입</h2>
+
+<h3>박테리아 Bacteria</h3>
+
+<div class="grid">
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeA.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Bacteria_BaseCodeA</div>
+    <div class="sub">지난 주</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeA+Texture.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Bacteria_BaseCodeA + Texture</div>
+    <div class="sub">지난 주</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeA_Combined.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Bacteria_BaseCodeA Combined</div>
+    <div class="sub">지난 주</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeB.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Bacteria_BaseCodeB</div>
+    <div class="sub">지난 주</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeB_Sentence.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Bacteria_BaseCodeB Sentence</div>
+    <div class="sub">지난 주 / 문장</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeC.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Bacteria_BaseCodeC</div>
+    <div class="sub">지난 주</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeC_Sentence.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Bacteria_BaseCodeC Sentence</div>
+    <div class="sub">지난 주 / 문장</div>
+  </div>
+</div>
+
+<h3>아메바 Amoeba</h3>
+
+<div class="grid">
+  <div class="card" onclick="openPreview('Amoeba_BaseCodeA.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Amoeba_BaseCodeA</div>
+    <div class="sub">지난 주</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Amoeba_BaseCodeA_Sentence.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Amoeba_BaseCodeA Sentence</div>
+    <div class="sub">지난 주 / 문장</div>
+  </div>
+</div>
+
+<h3>원생동물 Protozoa</h3>
+
+<div class="grid">
+  <div class="card" onclick="openPreview('Protozoa_BaseCodeA.html')">
+    <div class="thumb">↗</div>
+    <div class="title">Protozoa_BaseCodeA</div>
+    <div class="sub">지난 주</div>
+  </div>
+</div>
+
+<h2>6/16 2차 리뷰 발표용 / 진행 과정</h2>
+
+<h3>박테리아 Bacteria</h3>
+
+<div class="process">
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeA_2.html')">
+    <div class="thumb">↗</div>
+    <div class="title">01 스케치</div>
+    <div class="sub">Bacteria</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeA_2_Texture.html')">
+    <div class="thumb">↗</div>
+    <div class="title">02 질감</div>
+    <div class="sub">Bacteria</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Bacteria_BaseCodeA_2_Texture+Color.html')">
+    <div class="thumb">↗</div>
+    <div class="title">03 색감</div>
+    <div class="sub">Bacteria</div>
+  </div>
+</div>
+
+<h3>아메바 Amoeba</h3>
+
+<div class="process">
+  <div class="card" onclick="openPreview('Amoeba_BaseCodeB.html')">
+    <div class="thumb">↗</div>
+    <div class="title">01 스케치</div>
+    <div class="sub">Amoeba</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Amoeba_BaseCodeB_Texture.html')">
+    <div class="thumb">↗</div>
+    <div class="title">02 질감</div>
+    <div class="sub">Amoeba</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Amoeba_BaseCodeB_Texture+Color.html')">
+    <div class="thumb">↗</div>
+    <div class="title">03 색감</div>
+    <div class="sub">Amoeba</div>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:22px;">
+  <div class="card" onclick="openPreview('Amoeba_BaseCodeB_Texture+Color_DeepSea.html')">
+    <div class="thumb">↗</div>
+    <div class="title">03 색감2</div>
+    <div class="sub">Amoeba / Deep Sea</div>
+  </div>
+</div>
+
+<h3>원생동물 Protozoa</h3>
+
+<div class="process">
+  <div class="card" onclick="openPreview('Protozoa_BaseCodeB.html')">
+    <div class="thumb">↗</div>
+    <div class="title">01 스케치</div>
+    <div class="sub">Protozoa</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Protozoa_BaseCodeB_Texture.html')">
+    <div class="thumb">↗</div>
+    <div class="title">02 질감</div>
+    <div class="sub">Protozoa</div>
+  </div>
+
+  <div class="card" onclick="openPreview('Protozoa_BaseCodeB_Texture+Color.html')">
+    <div class="thumb">↗</div>
+    <div class="title">03 색감</div>
+    <div class="sub">Protozoa</div>
+  </div>
+</div>
+
+<h3>균류 Fungi</h3>
+
+<div class="grid">
+  <div class="card" onclick="openPreview('Fungi_BaseCodeA.html')">
+    <div class="thumb">↗</div>
+    <div class="title">스케치 / 진행중</div>
+    <div class="sub">Fungi</div>
+  </div>
+</div>
+
+<script>
+  function openPreview(file){
+    document.getElementById("previewFrame").src = file;
+    document.getElementById("previewBox").style.display = "block";
+  }
+
+  function closePreview(){
+    document.getElementById("previewBox").style.display = "none";
+    document.getElementById("previewFrame").src = "";
+  }
+</script>
+
+</body>
+</html>

@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fungi_BaseCodeA</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #f8f8f8; }
+      body { display: grid; place-items: center; }
+      canvas { display: block; width: min(100vw, 100vh); height: min(100vw, 100vh); }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/p5@1.9.4/lib/p5.min.js"></script>
+  </head>
+  <body>
+    <script>
+      // Fungi_BaseCodeA
+      // One pixel-rooted dendritic organism repeatedly searches for the shape of A.
+
+      const simW = 160;
+      const simH = 160;
+      const root = { x: 80, y: 80 };
+      const ink = [];
+      const displayInk = [];
+      let tips = [];
+      let attempt = 0;
+      let nextTipId = 0;
+      let colonyPhase = "grow";
+      let phaseAge = 0;
+      let cycleAge = 0;
+      let lastActivityFrame = 0;
+
+      const aAnchors = [
+        { x: 48, y: 136 },
+        { x: 61, y: 94 },
+        { x: 80, y: 35 },
+        { x: 99, y: 94 },
+        { x: 113, y: 136 },
+      ];
+
+      function setup() {
+        createCanvas(400, 400);
+        pixelDensity(1);
+        initInk();
+        beginAttempt();
+      }
+
+      function initInk() {
+        for (let x = 0; x < simW; x++) {
+          ink[x] = [];
+          displayInk[x] = [];
+          for (let y = 0; y < simH; y++) {
+            ink[x][y] = 0;
+            displayInk[x][y] = 0;
+          }
+        }
+      }
+
+      function beginAttempt() {
+        attempt++;
+        colonyPhase = "grow";
+        phaseAge = 0;
+        cycleAge = 0;
+        lastActivityFrame = frameCount;
+        tips = [];
+
+        const count = 7;
+        for (let i = 0; i < count; i++) {
+          const launchAngle = (i / count) * TWO_PI + random(-0.24, 0.24);
+          tips.push(makeTip(i, i * 42, launchAngle, 0));
+        }
+        drawSoma();
+      }
+
+      function makeTip(anchorIndex, delay, launchAngle, generation) {
+        return {
+          id: nextTipId++,
+          x: root.x + random(-0.6, 0.6),
+          y: root.y + random(-0.6, 0.6),
+          angle: launchAngle,
+          anchorIndex,
+          generation,
+          heading: launchAngle,
+          delay,
+          age: 0,
+          done: false,
+          mode: "grow",
+          retractTo: 1,
+          minPath: 2,
+          roamTarget: null,
+          bloomTarget: {
+            x: root.x + cos(launchAngle) * random(35, 62),
+            y: root.y + sin(launchAngle) * random(35, 62),
+          },
+          maxLength: generation === 0 ? random(78, 96) : max(7, random(24, 34) * pow(0.62, generation - 1)),
+          travelled: 0,
+          forkCount: 0,
+          maxForks: generation === 0 ? floor(random(3, 5)) : generation < 3 ? floor(random(2, 4)) : 1,
+          nextFork: generation === 0 ? floor(random(105, 170)) : floor(random(38, 72)),
+          path: [{ x: root.x, y: root.y, width: 3.5 }],
+          noiseOffset: random(1000),
+        };
+      }
+
+      function draw() {
+        softenInk();
+        phaseAge++;
+        cycleAge++;
+
+        if (colonyPhase === "grow") {
+          growOrganism();
+          wakeStalledTips();
+
+          if (frameCount % 180 === 0 && tips.length < 105) branchFromNetwork();
+          if (frameCount % 90 === 0 && activeTipCount() < 7 && tips.length < 112) {
+            reviveColony();
+          }
+          const active = activeTipCount();
+          const noGrowth = active === 0 && frameCount - lastActivityFrame > 22;
+          const inactive = frameCount - lastActivityFrame > 225;
+          const covered = frameCount % 90 === 0 && dishCoverage() > 0.2;
+          if (noGrowth || inactive || covered) beginFullRetraction();
+        } else {
+          retractOrganism();
+          if (tips.every((tip) => tip.path.length <= tip.minPath)) restartColony();
+        }
+
+        drawSoma();
+        drawPixels();
+        drawFrame();
+      }
+
+      function growOrganism() {
+        for (const tip of tips) {
+          if (tip.mode !== "grow" || frameCount < tip.delay) continue;
+          tip.age++;
+
+          const drift = map(noise(tip.noiseOffset + tip.age * 0.006), 0, 1, -0.035, 0.035);
+          const desired = tip.heading + drift;
+          tip.angle = turnToward(tip.angle, desired, 0.1, 0.012);
+
+          const oldX = tip.x;
+          const oldY = tip.y;
+          const speed = random(0.1, 0.18) * max(0.72, 1 - tip.generation * 0.055);
+          const nextX = tip.x + cos(tip.angle) * speed;
+          const nextY = tip.y + sin(tip.angle) * speed;
+
+          const launch = tip.path[tip.path.length > 1 ? 1 : 0];
+          const launchClearance = tip.generation === 0 ? 9 : 4.5;
+          const clearOfLaunch = dist(tip.x, tip.y, launch.x, launch.y) > launchClearance;
+          if (clearOfLaunch && ribbonCrowding(nextX, nextY, tip.angle) > 0.52) {
+            const fusion = findFusionPoint(tip, nextX, nextY);
+            if (fusion) {
+              fuseToNetwork(tip, fusion);
+            } else {
+              stallTip(tip);
+            }
+            continue;
+          }
+
+          const proposedX = tip.x + cos(tip.angle) * speed;
+          const proposedY = tip.y + sin(tip.angle) * speed;
+          if (dist(proposedX, proposedY, 80, 80) >= 69.2) {
+            tip.mode = "edge";
+            continue;
+          }
+          tip.x = proposedX;
+          tip.y = proposedY;
+          tip.travelled += speed;
+          lastActivityFrame = frameCount;
+          const baseWidth = max(0.62, 2.35 - tip.generation * 0.32);
+          const lengthProgress = constrain(tip.travelled / tip.maxLength, 0, 1);
+          const taper = lerp(1, 0.34, smoothStep(lengthProgress));
+          const wallWidth = max(
+            0.38,
+            (baseWidth + noise(tip.noiseOffset + tip.age * 0.009) * 0.72) * taper
+          );
+          depositLine(oldX, oldY, tip.x, tip.y, 0.38, wallWidth);
+
+          if (tip.age % 5 === 0) tip.path.push({ x: tip.x, y: tip.y, width: wallWidth });
+
+          if (
+            tip.age > tip.nextFork &&
+            tip.forkCount < tip.maxForks &&
+            tip.generation < 4 &&
+            tips.length < 112 &&
+            dist(tip.x, tip.y, root.x, root.y) > 15
+          ) {
+            forkTip(tip);
+            tip.forkCount++;
+            tip.nextFork += tip.generation === 0 ? floor(random(95, 165)) : floor(random(55, 105));
+          }
+
+          if (tip.travelled >= tip.maxLength) tip.mode = "terminal";
+
+        }
+      }
+
+      function retractOrganism() {
+        for (const tip of tips) {
+          if (tip.mode !== "retract") continue;
+          tip.retractProgress = (tip.retractProgress || 0) + 0.2;
+          if (tip.retractProgress < 1) continue;
+          tip.retractProgress -= 1;
+          if (tip.path.length > tip.retractTo) {
+            const end = tip.path.pop();
+            const previous = tip.path[tip.path.length - 1];
+            const eraseWidth = max(end.width || 2.2, previous.width || 2.2) + 0.8;
+            eraseLine(end.x, end.y, previous.x, previous.y, 0.92, eraseWidth);
+            tip.x = previous.x;
+            tip.y = previous.y;
+
+            deposit(tip.x, tip.y, 0.52, (previous.width || 2.2) + 1.2);
+          }
+
+          if (tip.path.length <= tip.retractTo) {
+            tip.mode = "rest";
+          }
+        }
+      }
+
+      function beginFullRetraction() {
+        colonyPhase = "retract";
+        phaseAge = 0;
+        for (const tip of tips) {
+          tip.mode = "retract";
+          tip.retractTo = tip.minPath;
+          tip.retractProgress = random(0, 0.8);
+        }
+      }
+
+      function restartColony() {
+        initInk();
+        beginAttempt();
+      }
+
+      function wakeStalledTips() {
+        // A blocked dendrite ends instead of curling around its neighbor.
+      }
+
+      function activeTipCount() {
+        return tips.filter((tip) => tip.mode === "grow").length;
+      }
+
+      function reviveColony() {
+        const sprouts = min(4, 9 - activeTipCount());
+        for (let i = 0; i < sprouts; i++) {
+          if (!branchFromNetwork(true)) break;
+        }
+      }
+
+      function dishCoverage() {
+        let occupied = 0;
+        let inside = 0;
+        for (let x = 8; x < simW - 8; x += 2) {
+          for (let y = 8; y < simH - 8; y += 2) {
+            if (dist(x, y, 80, 80) > 70) continue;
+            inside++;
+            if (ink[x][y] > 0.18) occupied++;
+          }
+        }
+        return occupied / max(1, inside);
+      }
+
+      function branchFromNetwork(force = false) {
+        const candidates = tips.filter((tip) =>
+          tip.mode !== "retract" &&
+          tip.mode !== "rest" &&
+          tip.path.length > 7 &&
+          tip.generation < 4
+        );
+        const parent = chooseSparseParent(candidates);
+        if (!parent) return false;
+        const start = force ? 0.35 : 0.52;
+        const anchorIndex = floor(random(parent.path.length * start, parent.path.length - 2));
+        const anchor = parent.path[anchorIndex];
+        const before = parent.path[max(0, anchorIndex - 2)];
+        const after = parent.path[min(parent.path.length - 1, anchorIndex + 2)];
+        const parentAngle = atan2(after.y - before.y, after.x - before.x);
+        const launchAngle = parentAngle + random([-1, 1]) * random(0.48, 0.82);
+        const child = makeTip(floor(random(aAnchors.length)), 0, launchAngle, parent.generation + 1);
+        child.x = anchor.x;
+        child.y = anchor.y;
+        child.path = [{ x: anchor.x, y: anchor.y, width: anchor.width || 2.2 }];
+        child.minPath = 1;
+        child.age = 0;
+        child.heading = launchAngle;
+        child.angle = launchAngle;
+        child.maxLength = max(8, parent.maxLength * random(0.38, 0.56));
+        child.travelled = 0;
+        child.forkCount = 0;
+        child.maxForks = child.generation < 3 ? floor(random(2, 4)) : 1;
+        child.nextFork = floor(random(38, 72));
+        tips.push(child);
+        deposit(anchor.x, anchor.y, 0.12, anchor.width || 2.2);
+        lastActivityFrame = frameCount;
+        return true;
+      }
+
+      function forkTip(parent) {
+        const side = random([-1, 1]);
+        const split = random(0.42, 0.82);
+        const childAngle = parent.angle + side * split;
+        const child = makeTip(
+          (parent.anchorIndex + random([-1, 1]) + aAnchors.length) % aAnchors.length,
+          0,
+          childAngle,
+          parent.generation + 1
+        );
+
+        child.x = parent.x;
+        child.y = parent.y;
+        child.age = 0;
+        child.path = [{ x: parent.x, y: parent.y, width: max(0.7, 2.3 - child.generation * 0.32) }];
+        child.minPath = 1;
+        child.heading = childAngle;
+        child.maxLength = max(6, parent.maxLength * random(0.4, 0.58));
+        child.travelled = 0;
+        child.forkCount = 0;
+        child.maxForks = child.generation < 3 ? floor(random(2, 4)) : 1;
+        child.nextFork = floor(random(34, 68));
+        tips.push(child);
+        lastActivityFrame = frameCount;
+
+        parent.heading -= side * random(0.05, 0.12);
+        deposit(parent.x, parent.y, 0.12, max(1.1, 2.4 - parent.generation * 0.25));
+      }
+
+      function chooseDishTarget(fromX, fromY) {
+        let target;
+        const sparseAngle = sparseSectorAngle();
+        for (let tries = 0; tries < 18; tries++) {
+          const angle = sparseAngle + random(-PI / 7, PI / 7);
+          const radius = sqrt(random()) * 69;
+          target = {
+            x: 80 + cos(angle) * radius,
+            y: 80 + sin(angle) * radius,
+          };
+          if (dist(fromX, fromY, target.x, target.y) > 34 && inkAt(target.x, target.y) < 0.08) return target;
+        }
+        return target;
+      }
+
+      function chooseOpenAngle(tip, desired) {
+        let bestAngle = tip.angle;
+        let bestScore = Infinity;
+
+        for (let i = -5; i <= 5; i++) {
+          const candidate = tip.angle + i * 0.11;
+          const probeX = tip.x + cos(candidate) * 5;
+          const probeY = tip.y + sin(candidate) * 5;
+          const crowding = ribbonCrowding(probeX, probeY, candidate);
+          const targetCost = abs(atan2(sin(candidate - desired), cos(candidate - desired))) * 0.2;
+          const turnCost = abs(i) * 0.05;
+          const score = crowding + targetCost + turnCost;
+          if (score < bestScore) {
+            bestScore = score;
+            bestAngle = candidate;
+          }
+        }
+
+        return turnToward(tip.angle, bestAngle, 0.22, 0.035);
+      }
+
+      function chooseSparseParent(candidates) {
+        if (candidates.length === 0) return null;
+        const counts = sectorCounts();
+        let best = candidates[0];
+        let bestScore = Infinity;
+        for (const tip of candidates) {
+          const sector = pointSector(tip.x, tip.y);
+          const score = counts[sector] + random(0, 2.2);
+          if (score < bestScore) {
+            best = tip;
+            bestScore = score;
+          }
+        }
+        return best;
+      }
+
+      function sparseSectorAngle() {
+        const counts = sectorCounts();
+        let minimum = min(counts);
+        const sparse = [];
+        for (let i = 0; i < counts.length; i++) {
+          if (counts[i] <= minimum + 1) sparse.push(i);
+        }
+        const sector = random(sparse);
+        return (sector + 0.5) * TWO_PI / counts.length;
+      }
+
+      function sectorCounts() {
+        const counts = new Array(8).fill(0);
+        for (const tip of tips) {
+          for (let i = 2; i < tip.path.length; i += 8) {
+            counts[pointSector(tip.path[i].x, tip.path[i].y)]++;
+          }
+        }
+        return counts;
+      }
+
+      function pointSector(x, y) {
+        let angle = atan2(y - 80, x - 80);
+        if (angle < 0) angle += TWO_PI;
+        return floor(angle / TWO_PI * 8) % 8;
+      }
+
+      function angleDifference(from, to) {
+        return atan2(sin(to - from), cos(to - from));
+      }
+
+      function nearestAFieldPoint(x, y, routeIndex) {
+        const segments = [
+          [{ x: 48, y: 136 }, { x: 80, y: 35 }],
+          [{ x: 80, y: 35 }, { x: 113, y: 136 }],
+          [{ x: 61, y: 94 }, { x: 99, y: 94 }],
+        ];
+        const preferred = routeIndex % 6;
+        const segment = segments[preferred < 2 ? 0 : preferred < 4 ? 1 : 2];
+        return closestPointOnSegment(x, y, segment[0], segment[1]);
+      }
+
+      function closestPointOnSegment(px, py, a, b) {
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const t = constrain(((px - a.x) * dx + (py - a.y) * dy) / (dx * dx + dy * dy), 0, 1);
+        return { x: a.x + dx * t, y: a.y + dy * t };
+      }
+
+      function turnToward(angle, target, amount, maxTurn) {
+        const change = constrain(angleDifference(angle, target) * amount, -maxTurn, maxTurn);
+        return angle + change;
+      }
+
+      function ribbonCrowding(x, y, angle) {
+        const nx = cos(angle + HALF_PI);
+        const ny = sin(angle + HALF_PI);
+        let total = 0;
+        for (const forward of [2.5, 5, 8]) {
+          for (const side of [-3.4, -1.7, 0, 1.7, 3.4]) {
+            total += inkAt(
+              x + cos(angle) * forward + nx * side,
+              y + sin(angle) * forward + ny * side
+            );
+          }
+        }
+        return total / 4.2;
+      }
+
+      function stallTip(tip) {
+        tip.mode = "stalled";
+        tip.roamTarget = null;
+      }
+
+      function findFusionPoint(tip, x, y) {
+        let nearest = null;
+        let nearestDistance = Infinity;
+
+        for (const other of tips) {
+          if (other.id === tip.id) continue;
+          for (let i = 2; i < other.path.length; i += 4) {
+            const point = other.path[i];
+            const d = dist(x, y, point.x, point.y);
+            if (d < 1.6 || d > 6.5 || d >= nearestDistance) continue;
+            nearest = point;
+            nearestDistance = d;
+          }
+        }
+
+        return nearest;
+      }
+
+      function fuseToNetwork(tip, point) {
+        const strength = aScaffoldStrength(tip.x, tip.y, point.x, point.y);
+        const width = max(0.65, min(tip.path[tip.path.length - 1].width || 1, point.width || 1.2));
+        const neckWidth = width + 0.45 + strength * 0.4;
+        depositLine(tip.x, tip.y, point.x, point.y, 0.3 + strength * 0.14, neckWidth);
+        deposit(tip.x, tip.y, 0.16, neckWidth + 0.8);
+        deposit(point.x, point.y, 0.16 + strength * 0.08, neckWidth + 0.8);
+        deposit((tip.x + point.x) * 0.5, (tip.y + point.y) * 0.5, 0.1, neckWidth + 0.45);
+        tip.path.push({ x: point.x, y: point.y, width });
+        tip.x = point.x;
+        tip.y = point.y;
+        tip.mode = "fused";
+        lastActivityFrame = frameCount;
+      }
+
+      function aScaffoldStrength(x1, y1, x2, y2) {
+        const x = (x1 + x2) * 0.5;
+        const y = (y1 + y2) * 0.5;
+        const left = pointSegmentDistance(x, y, 48, 136, 80, 35);
+        const right = pointSegmentDistance(x, y, 80, 35, 113, 136);
+        const bar = pointSegmentDistance(x, y, 61, 94, 99, 94);
+        return constrain(1 - min(left, right, bar) / 11, 0, 1);
+      }
+
+      function pointSegmentDistance(px, py, x1, y1, x2, y2) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const lengthSquared = dx * dx + dy * dy;
+        const t = constrain(((px - x1) * dx + (py - y1) * dy) / lengthSquared, 0, 1);
+        return dist(px, py, x1 + dx * t, y1 + dy * t);
+      }
+
+      function inkAt(x, y) {
+        const px = constrain(floor(x), 0, simW - 1);
+        const py = constrain(floor(y), 0, simH - 1);
+        return ink[px][py];
+      }
+
+      function softenInk() {
+        if (colonyPhase !== "retract") return;
+
+        for (let x = 0; x < simW; x++) {
+          for (let y = 0; y < simH; y++) {
+            ink[x][y] *= 0.9975;
+            if (ink[x][y] < 0.035) ink[x][y] = 0;
+          }
+        }
+      }
+
+      function drawSoma() {
+        const breath = sin(frameCount * 0.022) * 0.55;
+        deposit(root.x, root.y, 0.14, 6.4 + breath);
+
+        // A stable pale core gives the rooted body a quiet eye-like presence.
+        deposit(root.x - 0.7, root.y - 0.55, -0.3, 1.65 + breath * 0.12);
+      }
+
+      function smoothStep(value) {
+        return value * value * (3 - 2 * value);
+      }
+
+      function depositLine(x1, y1, x2, y2, amount, radius) {
+        const steps = max(2, ceil(dist(x1, y1, x2, y2) * 8));
+        for (let i = 0; i < steps; i++) {
+          const t = i / (steps - 1);
+          deposit(lerp(x1, x2, t), lerp(y1, y2, t), amount, radius);
+        }
+      }
+
+      function eraseLine(x1, y1, x2, y2, amount, radius) {
+        const steps = max(2, ceil(dist(x1, y1, x2, y2) * 8));
+        for (let i = 0; i < steps; i++) {
+          const t = i / (steps - 1);
+          deposit(lerp(x1, x2, t), lerp(y1, y2, t), -amount, radius);
+        }
+      }
+
+      function deposit(x, y, amount, radius) {
+        const minX = floor(x - radius);
+        const maxX = ceil(x + radius);
+        const minY = floor(y - radius);
+        const maxY = ceil(y + radius);
+
+        for (let px = minX; px <= maxX; px++) {
+          for (let py = minY; py <= maxY; py++) {
+            if (px < 0 || px >= simW || py < 0 || py >= simH) continue;
+            const d = dist(x, y, px, py);
+            if (d > radius) continue;
+            const falloff = 1 - d / radius;
+            ink[px][py] = constrain(ink[px][py] + amount * falloff, 0, 1);
+          }
+        }
+      }
+
+      function drawPixels() {
+        loadPixels();
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const sx = min(simW - 1, floor(x * simW / width));
+            const sy = min(simH - 1, floor(y * simH / height));
+            const dx = x - width / 2;
+            const dy = y - height / 2;
+            const inside = dx * dx + dy * dy < 182 * 182;
+            const value = inside ? ink[sx][sy] : 0;
+            const col = value > 0.18 ? map(value, 0.18, 1, 72, 0) : 248;
+            const index = (x + y * width) * 4;
+            pixels[index] = col;
+            pixels[index + 1] = col;
+            pixels[index + 2] = col;
+            pixels[index + 3] = 255;
+          }
+        }
+        updatePixels();
+      }
+
+      function drawFrame() {
+        noFill();
+        stroke(0);
+        strokeWeight(2);
+        circle(width / 2, height / 2, 365);
+      }
+
+      function lerpAngle(a, b, amount) {
+        return a + atan2(sin(b - a), cos(b - a)) * amount;
+      }
+
+      function mousePressed() {
+        if (colonyPhase === "grow") beginFullRetraction();
+      }
+    </script>
+  </body>
+</html>
